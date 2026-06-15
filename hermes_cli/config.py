@@ -1215,6 +1215,12 @@ DEFAULT_CONFIG = {
         "response_cache": True,
         "response_cache_ttl": 300,
         "min_coding_score": 0.65,
+        # Model picker source:
+        #   curated — Hermes curated manifest/fallback list (default, backward-compatible)
+        #   all     — public OpenRouter /api/v1/models catalog
+        #   user    — authenticated /api/v1/models/user filtered by account provider preferences,
+        #             privacy settings, and guardrails
+        "model_list_source": "curated",
     },
 
     # AWS Bedrock provider configuration.
