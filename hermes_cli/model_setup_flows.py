@@ -63,6 +63,28 @@ def _prompt_auth_credentials_choice(title: str) -> str:
     return "use"
 
 
+def _prompt_openrouter_model_list_source(current: str = "curated") -> str:
+    choices = [
+        ("curated", "Hermes curated list (recommended, current behavior)"),
+        ("all", "All OpenRouter models (large list)"),
+        ("user", "My OpenRouter account-filtered models (provider/privacy/guardrail filtered)"),
+    ]
+    print("\nOpenRouter model list source:")
+    for idx, (value, label) in enumerate(choices, start=1):
+        marker = " [current]" if value == current else ""
+        print(f"  {idx}. {label}{marker}")
+    raw = input("Choose source [1-3, Enter keeps current]: ").strip()
+    if not raw:
+        return current if current in {"curated", "all", "user"} else "curated"
+    try:
+        index = int(raw)
+    except ValueError:
+        return current if current in {"curated", "all", "user"} else "curated"
+    if 1 <= index <= len(choices):
+        return choices[index - 1][0]
+    return current if current in {"curated", "all", "user"} else "curated"
+
+
 def _model_flow_openrouter(config, current_model=""):
     """OpenRouter provider: ensure API key, then pick model."""
     from hermes_cli.main import _prompt_api_key
@@ -94,12 +116,27 @@ def _model_flow_openrouter(config, current_model=""):
     if abort:
         return
 
-    from hermes_cli.models import model_ids, get_pricing_for_provider
+    from hermes_cli.models import (
+        model_ids,
+        get_pricing_for_provider,
+        get_openrouter_model_list_source,
+        save_openrouter_model_list_source,
+    )
+
+    source = _prompt_openrouter_model_list_source(get_openrouter_model_list_source())
+    save_openrouter_model_list_source(source)
 
     openrouter_models = model_ids(force_refresh=True)
 
     # Fetch live pricing (non-blocking — returns empty dict on failure)
     pricing = get_pricing_for_provider("openrouter", force_refresh=True)
+
+    source_label = {
+        "curated": "curated",
+        "all": "all OpenRouter",
+        "user": "account-filtered OpenRouter",
+    }.get(source, "curated")
+    print(f"Showing {len(openrouter_models)} {source_label} models — use \"Enter custom model name\" for others.")
 
     selected = _prompt_model_selection(
         openrouter_models,
