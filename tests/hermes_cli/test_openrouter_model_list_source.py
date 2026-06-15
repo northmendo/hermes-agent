@@ -111,3 +111,16 @@ def test_fetch_openrouter_models_user_uses_user_filtered_api_order(monkeypatch):
     models._openrouter_catalog_cache = None
 
     assert models.fetch_openrouter_models(force_refresh=True) == [("my/model", "free")]
+
+
+def test_save_openrouter_model_list_source_updates_config(monkeypatch, tmp_path):
+    from hermes_cli import config, models
+
+    state = {"openrouter": {"response_cache": True}}
+    monkeypatch.setattr(config, "load_config", lambda: state.copy())
+    saved = {}
+    monkeypatch.setattr(config, "save_config", lambda cfg: saved.update(cfg))
+
+    models.save_openrouter_model_list_source("user")
+
+    assert saved["openrouter"]["model_list_source"] == "user"
