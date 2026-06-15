@@ -29,6 +29,9 @@ COPILOT_EDITOR_VERSION = "vscode/1.104.1"
 COPILOT_REASONING_EFFORTS_GPT5 = ["minimal", "low", "medium", "high"]
 COPILOT_REASONING_EFFORTS_O_SERIES = ["low", "medium", "high"]
 
+OPENROUTER_PUBLIC_MODELS_URL = "https://openrouter.ai/api/v1/models"
+OPENROUTER_USER_MODELS_URL = "https://openrouter.ai/api/v1/models/user"
+
 
 # Fallback OpenRouter snapshot used when the live catalog is unavailable.
 # (model_id, display description shown in menus)
@@ -141,6 +144,34 @@ def resolve_openrouter_api_key_for_models_user() -> str:
         pass
 
     return ""
+
+
+def fetch_openrouter_live_items(
+    source: str,
+    *,
+    api_key: str = "",
+    timeout: float = 8.0,
+) -> list[dict[str, Any]]:
+    """Fetch live OpenRouter model objects for source: all/user/curated.
+
+    ``curated`` uses the public endpoint for liveness/pricing validation.
+    ``all`` uses the public endpoint as the source list.
+    ``user`` uses /models/user and requires an API key.
+    """
+    normalized = source if source in _OPENROUTER_MODEL_LIST_SOURCES else "curated"
+    url = OPENROUTER_USER_MODELS_URL if normalized == "user" else OPENROUTER_PUBLIC_MODELS_URL
+    headers = {"Accept": "application/json", "User-Agent": _HERMES_USER_AGENT}
+    if normalized == "user":
+        if not _looks_usable_secret(api_key):
+            return []
+        headers["Authorization"] = f"Bearer {api_key}"
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        payload = json.loads(resp.read().decode())
+    live_items = payload.get("data", [])
+    if not isinstance(live_items, list):
+        return []
+    return [item for item in live_items if isinstance(item, dict) and str(item.get("id") or "").strip()]
 
 
 
