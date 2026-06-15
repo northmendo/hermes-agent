@@ -146,6 +146,21 @@ def resolve_openrouter_api_key_for_models_user() -> str:
     return ""
 
 
+def save_openrouter_model_list_source(source: str) -> None:
+    """Persist the OpenRouter model-list source to config."""
+    from hermes_cli.config import load_config, save_config
+    normalized = str(source or "curated").strip().lower()
+    if normalized not in _OPENROUTER_MODEL_LIST_SOURCES:
+        normalized = "curated"
+    cfg = load_config() or {}
+    block = cfg.get("openrouter")
+    if not isinstance(block, dict):
+        block = {}
+    block["model_list_source"] = normalized
+    cfg["openrouter"] = block
+    save_config(cfg)
+
+
 def fetch_openrouter_live_items(
     source: str,
     *,
