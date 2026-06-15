@@ -102,6 +102,47 @@ def get_openrouter_model_list_source() -> str:
     return source if source in _OPENROUTER_MODEL_LIST_SOURCES else "curated"
 
 
+def _looks_usable_secret(value: Any, *, min_length: int = 4) -> bool:
+    if not isinstance(value, str):
+        return False
+    cleaned = value.strip()
+    if len(cleaned) < min_length:
+        return False
+    if cleaned.lower() in {"", "your_api_key", "your-api-key", "placeholder", "example", "dummy", "null", "none"}:
+        return False
+    return True
+
+
+def resolve_openrouter_api_key_for_models_user() -> str:
+    """Resolve an OpenRouter API key for /api/v1/models/user.
+
+    Resolution order mirrors API-key provider behavior: ~/.hermes/.env via
+    get_env_value('OPENROUTER_API_KEY'), then credential_pool['openrouter'].
+    Returns an empty string when unavailable.
+    """
+    try:
+        from hermes_cli.config import get_env_value
+        key = (get_env_value("OPENROUTER_API_KEY") or "").strip()
+        if _looks_usable_secret(key):
+            return key
+    except Exception:
+        pass
+
+    try:
+        from agent.credential_pool import load_pool
+        pool = load_pool("openrouter")
+        if pool and pool.has_credentials():
+            entry = pool.peek()
+            if entry:
+                key = (getattr(entry, "access_token", "") or getattr(entry, "runtime_api_key", "") or "").strip()
+                if _looks_usable_secret(key):
+                    return key
+    except Exception:
+        pass
+
+    return ""
+
+
 
 
 def _codex_curated_models() -> list[str]:
