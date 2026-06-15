@@ -1402,16 +1402,48 @@ def _openrouter_model_supports_tools(item: Any) -> bool:
     return "tools" in params
 
 
+def _openrouter_desc_for_live_item(item: dict[str, Any]) -> str:
+    return "free" if _openrouter_model_is_free(item.get("pricing")) else ""
+
+
+def _models_from_live_items(live_items: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for item in live_items:
+        mid = str(item.get("id") or "").strip()
+        if not mid or mid in seen:
+            continue
+        seen.add(mid)
+        if not _openrouter_model_supports_tools(item):
+            continue
+        out.append((mid, _openrouter_desc_for_live_item(item)))
+    return out
+
+
 def fetch_openrouter_models(
     timeout: float = 8.0,
     *,
     force_refresh: bool = False,
 ) -> list[tuple[str, str]]:
-    """Return the curated OpenRouter picker list, refreshed from the live catalog when possible."""
+    """Return the OpenRouter picker list for the configured source."""
     global _openrouter_catalog_cache
 
     if _openrouter_catalog_cache is not None and not force_refresh:
         return list(_openrouter_catalog_cache)
+
+    source = get_openrouter_model_list_source()
+    if source in {"all", "user"}:
+        api_key = resolve_openrouter_api_key_for_models_user() if source == "user" else ""
+        try:
+            live_items = fetch_openrouter_live_items(source, api_key=api_key, timeout=timeout)
+            live_models = _models_from_live_items(live_items)
+        except Exception:
+            live_models = []
+        if live_models:
+            _openrouter_catalog_cache = live_models
+            return list(live_models)
+        # Fail soft: preserve current behavior if user source is unavailable.
+        source = "curated"
 
     # Prefer the remotely-hosted catalog manifest; fall back to the in-repo
     # snapshot when the manifest is unreachable. Both are curated lists that
@@ -1426,17 +1458,8 @@ def fetch_openrouter_models(
     preferred_ids = [mid for mid, _ in fallback]
 
     try:
-        req = urllib.request.Request(
-            "https://openrouter.ai/api/v1/models",
-            headers={"Accept": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            payload = json.loads(resp.read().decode())
+        live_items = fetch_openrouter_live_items("curated", timeout=timeout)
     except Exception:
-        return list(_openrouter_catalog_cache or fallback)
-
-    live_items = payload.get("data", [])
-    if not isinstance(live_items, list):
         return list(_openrouter_catalog_cache or fallback)
 
     live_by_id: dict[str, dict[str, Any]] = {}
