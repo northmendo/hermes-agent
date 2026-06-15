@@ -84,3 +84,30 @@ def test_fetch_openrouter_live_items_uses_public_endpoint_for_all(monkeypatch):
     assert seen["url"] == "https://openrouter.ai/api/v1/models"
     assert seen["auth"] is None
     assert items[0]["id"] == "public/model"
+
+
+def test_fetch_openrouter_models_all_uses_live_api_order(monkeypatch):
+    from hermes_cli import models
+
+    monkeypatch.setattr(models, "get_openrouter_model_list_source", lambda: "all")
+    monkeypatch.setattr(models, "fetch_openrouter_live_items", lambda source, **kwargs: [
+        {"id": "z/model", "supported_parameters": ["tools"], "pricing": {"prompt": "0.1", "completion": "0.2"}},
+        {"id": "a/free", "supported_parameters": ["tools"], "pricing": {"prompt": "0", "completion": "0"}},
+        {"id": "no/tools", "supported_parameters": ["temperature"], "pricing": {"prompt": "0", "completion": "0"}},
+    ])
+    models._openrouter_catalog_cache = None
+
+    assert models.fetch_openrouter_models(force_refresh=True) == [("z/model", ""), ("a/free", "free")]
+
+
+def test_fetch_openrouter_models_user_uses_user_filtered_api_order(monkeypatch):
+    from hermes_cli import models
+
+    monkeypatch.setattr(models, "get_openrouter_model_list_source", lambda: "user")
+    monkeypatch.setattr(models, "resolve_openrouter_api_key_for_models_user", lambda: "sk-test")
+    monkeypatch.setattr(models, "fetch_openrouter_live_items", lambda source, **kwargs: [
+        {"id": "my/model", "supported_parameters": ["tools"], "pricing": {"prompt": "0", "completion": "0"}},
+    ])
+    models._openrouter_catalog_cache = None
+
+    assert models.fetch_openrouter_models(force_refresh=True) == [("my/model", "free")]
