@@ -85,6 +85,22 @@ OPENROUTER_MODELS: list[tuple[str, str]] = [
 
 _openrouter_catalog_cache: list[tuple[str, str]] | None = None
 
+_OPENROUTER_MODEL_LIST_SOURCES = {"curated", "all", "user"}
+
+
+def get_openrouter_model_list_source() -> str:
+    """Return configured OpenRouter picker source: curated, all, or user."""
+    try:
+        from hermes_cli.config import load_config
+        cfg = load_config() or {}
+    except Exception:
+        cfg = {}
+    raw = cfg.get("openrouter")
+    if not isinstance(raw, dict):
+        return "curated"
+    source = str(raw.get("model_list_source") or "curated").strip().lower()
+    return source if source in _OPENROUTER_MODEL_LIST_SOURCES else "curated"
+
 
 
 
