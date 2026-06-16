@@ -1,0 +1,152 @@
+name: Upstream Sync Check
+
+# Monitors NousResearch/hermes-agent:main for new commits that the fork
+# hasn't yet merged.  Runs every 8 hours starting at 06:00 Pacific
+# (13:00 UTC during PDT, 14:00 UTC during PST) so the owner gets a
+# morning digest plus two more checks throughout the day.
+#
+# When new upstream commits are found, the workflow opens (or updates) a
+# GitHub issue so the bundle branch can be rebased at the owner's
+# convenience.  No automatic merge or push happens — the workflow is
+# read-only with respect to the upstream repo.
+
+on:
+  schedule:
+    # 06:00 Pacific ≈ 13:00 UTC (PDT) / 14:00 UTC (PST)
+    # Every 8 hours: 13:00, 21:00, 05:00 UTC
+    - cron: '0 13,21,5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check-upstream:
+    # Only run on the fork — upstream doesn't need to watch itself.
+    if: github.repository != 'NousResearch/hermes-agent'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/NousResearch/hermes-agent.git
+          git fetch upstream main
+
+      - name: Compare upstream vs bundle
+        id: compare
+        run: |
+          # Count commits on upstream/main that are not in our bundle branch
+          AHEAD=$(git rev-list --count HEAD..upstream/main)
+          echo "ahead=$AHEAD" >> "$GITHUB_OUTPUT"
+
+          if [ "$AHEAD" -eq 0 ]; then
+            echo "status=synced" >> "$GITHUB_OUTPUT"
+            echo "detail=Bundle branch is up to date with upstream/main" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "status=behind" >> "$GITHUB_OUTPUT"
+
+          # List the new commits (max 20 for issue readability)
+          COMMITS=$(git log --oneline --reverse "HEAD..upstream/main" | head -20)
+          {
+            echo "commits<<EOF"
+            echo "$COMMITS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          # Summary of what changed (files, authors, dates)
+          FIRST=$(git log --reverse --format="%H" "HEAD..upstream/main" | head -1)
+          LAST=$(git log --format="%H" "HEAD..upstream/main" | head -1)
+          echo "range=${FIRST}..${LAST}" >> "$GITHUB_OUTPUT"
+
+          echo "detail=Bundle is ${AHEAD} commit(s) behind upstream/main" >> "$GITHUB_OUTPUT"
+
+      - name: Report status
+        run: |
+          echo "Status:  ${{ steps.compare.outputs.status }}"
+          echo "Detail:  ${{ steps.compare.outputs.detail }}"
+          if [ -n "${{ steps.compare.outputs.commits }}" ]; then
+            echo ""
+            echo "New commits:"
+            echo "${{ steps.compare.outputs.commits }}"
+          fi
+
+      - name: Open or update sync issue
+        if: steps.compare.outputs.status == 'behind'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AHEAD: ${{ steps.compare.outputs.ahead }}
+          DETAIL: ${{ steps.compare.outputs.detail }}
+          COMMITS: ${{ steps.compare.outputs.commits }}
+          RANGE: ${{ steps.compare.outputs.range }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          TITLE_PREFIX="[upstream-sync]"
+
+          # Search for an existing open sync issue
+          existing=$(gh issue list \
+            --repo "${{ github.repository }}" \
+            --state open \
+            --search "in:title \"${TITLE_PREFIX}\"" \
+            --json number,title \
+            --jq '.[] | select(.title | startswith("'"${TITLE_PREFIX}"'")) | .number' \
+            | head -1)
+
+          cat <<'BODY' > /tmp/issue-body.md
+          Upstream `NousResearch/hermes-agent:main` has new commits.
+
+          **${DETAIL}**
+
+          **Range:** `${RANGE}`
+
+          **New commits:**
+          ```
+          ${COMMITS}
+          ```
+
+          **To sync:**
+          ```bash
+          git fetch upstream main
+          git checkout feat/northmendo-qol-bundle
+          git rebase upstream/main
+          # resolve any conflicts, then:
+          git push --force-with-lease origin feat/northmendo-qol-bundle
+          ```
+
+          **Run that triggered this check:** ${RUN_URL}
+
+          ---
+          *This issue was opened by `.github/workflows/upstream-sync-check.yml`. Close it after syncing; the next check will reopen if there are still upstream commits to merge.*
+          BODY
+
+          # Substitute env vars into the body
+          envsubst < /tmp/issue-body.md > /tmp/issue-body-sub.md
+
+          if [ -n "$existing" ]; then
+            echo "Updating existing issue #${existing}"
+            cat <<'COMMENT' > /tmp/comment.md
+          Still behind upstream at $(date -u +%FT%TZ): ${DETAIL}
+
+          ```
+          ${COMMITS}
+          ```
+
+          **Run:** ${RUN_URL}
+          COMMENT
+            envsubst < /tmp/comment.md > /tmp/comment-sub.md
+            gh issue comment "$existing" \
+              --repo "${{ github.repository }}" \
+              --body-file /tmp/comment-sub.md
+          else
+            echo "Opening new sync issue"
+            gh issue create --repo "${{ github.repository }}" \
+              --title "${TITLE_PREFIX} ${DETAIL}" \
+              --body-file /tmp/issue-body-sub.md
+          fi
