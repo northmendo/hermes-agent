@@ -20,6 +20,13 @@ from unittest.mock import patch
 import pytest
 
 
+def _fork_install_target() -> str:
+    """Return the moving fork branch target used by fork-aware pip updates."""
+    from hermes_cli.main import FORK_INSTALL_COMMAND
+
+    return FORK_INSTALL_COMMAND.split()[-1]
+
+
 # ---------------------------------------------------------------------------
 # Managed-uv compatibility for tests that patch shutil.which
 # ---------------------------------------------------------------------------
@@ -193,7 +200,7 @@ class TestCmdUpdatePipUsesUvTool:
 
     @patch("subprocess.run")
     def test_runs_uv_pip_install_when_not_uv_tool(self, mock_run):
-        """Existing behavior preserved when uv is present but Hermes isn't a tool install."""
+        """uv-pip installs keep the uv path but target the fork bundle branch."""
         from hermes_cli.main import _cmd_update_pip
 
         mock_run.return_value = subprocess.CompletedProcess(["uv"], 0, stdout="", stderr="")
@@ -206,7 +213,8 @@ class TestCmdUpdatePipUsesUvTool:
             "pip",
             "install",
             "--upgrade",
-            "hermes-agent",
+            "--reinstall",
+            _fork_install_target(),
         ]
 
     @patch("subprocess.run")
@@ -219,7 +227,14 @@ class TestCmdUpdatePipUsesUvTool:
             _cmd_update_pip(SimpleNamespace())
 
         cmd = mock_run.call_args[0][0]
-        assert cmd[1:] == ["-m", "pip", "install", "--upgrade", "hermes-agent"]
+        assert cmd[1:] == [
+            "-m",
+            "pip",
+            "install",
+            "--upgrade",
+            "--force-reinstall",
+            _fork_install_target(),
+        ]
 
     @patch("subprocess.run")
     def test_exits_nonzero_on_subprocess_failure(self, mock_run):
@@ -301,7 +316,12 @@ class TestCmdUpdatePipInstallLayouts:
 
         # prefix != base_prefix, so this is treated as a venv -> overlay, no --system.
         assert mock_run.call_args[0][0] == [
-            "/usr/bin/uv", "pip", "install", "--upgrade", "hermes-agent",
+            "/usr/bin/uv",
+            "pip",
+            "install",
+            "--upgrade",
+            "--reinstall",
+            _fork_install_target(),
         ]
         assert mock_run.call_args.kwargs["env"]["VIRTUAL_ENV"].endswith("hermes-agent")
 
@@ -319,7 +339,13 @@ class TestCmdUpdatePipInstallLayouts:
             hm._cmd_update_pip(SimpleNamespace())
 
         assert mock_run.call_args[0][0] == [
-            "/usr/bin/uv", "pip", "install", "--system", "--upgrade", "hermes-agent",
+            "/usr/bin/uv",
+            "pip",
+            "install",
+            "--system",
+            "--upgrade",
+            "--reinstall",
+            _fork_install_target(),
         ]
         assert "env" not in mock_run.call_args.kwargs
 
@@ -338,5 +364,12 @@ class TestCmdUpdatePipInstallLayouts:
 
         cmd = mock_run.call_args[0][0]
         assert "--system" not in cmd
-        assert cmd == ["/usr/bin/uv", "pip", "install", "--upgrade", "hermes-agent"]
+        assert cmd == [
+            "/usr/bin/uv",
+            "pip",
+            "install",
+            "--upgrade",
+            "--reinstall",
+            _fork_install_target(),
+        ]
         assert mock_run.call_args.kwargs["env"]["VIRTUAL_ENV"] == "/home/u/.hermes/hermes-agent/venv"
