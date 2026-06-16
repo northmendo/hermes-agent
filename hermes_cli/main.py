@@ -5834,7 +5834,7 @@ def _update_via_zip(args):
         )
         sys.exit(1)
     zip_url = (
-        f"https://github.com/NousResearch/hermes-agent/archive/refs/heads/{branch}.zip"
+        f"https://github.com/northmendo/hermes-agent/archive/refs/heads/{FORK_BUNDLE_BRANCH}.zip"
     )
 
     print("→ Downloading latest version...")
