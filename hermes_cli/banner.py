@@ -125,6 +125,28 @@ _UPSTREAM_REPO_URL = "https://github.com/NousResearch/hermes-agent.git"
 _OFFICIAL_REPO_CANONICAL = "github.com/nousresearch/hermes-agent"
 
 
+def _is_stale_upstream_clone_for_banner(repo_dir: Path) -> bool:
+    """True if repo_dir is a git checkout whose origin is the upstream Nous repo.
+
+    Used to suppress the "N commits behind" banner when the running install
+    is from a fork but an old upstream clone still lives in $HERMES_HOME.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=str(repo_dir),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return False
+        origin = result.stdout.strip()
+        return _canonical_github_remote(origin) == _OFFICIAL_REPO_CANONICAL
+    except Exception:
+        return False
+
+
 def _canonical_github_remote(url: str | None) -> str:
     """Return ``host/owner/repo`` for common GitHub remote URL forms."""
     if not url:
@@ -326,6 +348,10 @@ def check_for_updates() -> Optional[int]:
             repo_dir = hermes_home / "hermes-agent"
         if not (repo_dir / ".git").exists():
             behind = check_via_pypi()
+        elif _is_stale_upstream_clone_for_banner(repo_dir):
+            # Running from fork but profile has stale upstream clone.
+            # Don't report misleading upstream commit counts.
+            behind = 0
         else:
             behind = _check_via_local_git(repo_dir)
 
