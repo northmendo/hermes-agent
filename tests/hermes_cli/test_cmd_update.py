@@ -102,36 +102,85 @@ class TestCmdUpdatePip:
         monkeypatch.delenv("VIRTUAL_ENV", raising=False)
         monkeypatch.setattr(hm.sys, "prefix", "/usr")
         monkeypatch.setattr(hm.sys, "base_prefix", "/usr")
+        monkeypatch.setattr(hm, "_is_windows", lambda: False)
 
         hm._cmd_update_pip(mock_args)
 
         assert mock_run.call_count == 1
         assert "env" not in mock_run.call_args.kwargs
 
-def test_cmd_update_prefers_pip_install_method_over_git_dir(monkeypatch, tmp_path):
-    """A pip install method must bypass git update even when .git exists."""
-    from hermes_cli import main as hm
+    @patch("shutil.which", return_value="/usr/bin/uv")
+    @patch("subprocess.Popen")
+    def test_update_pip_system_windows_uses_detached_helper(
+        self, mock_popen, _mock_which, mock_args, monkeypatch
+    ):
+        from hermes_cli import main as hm
 
-    (tmp_path / ".git").mkdir()
-    monkeypatch.setattr(hm, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setattr(hm, "_run_pre_update_backup", lambda _args: None)
-    monkeypatch.setattr(hm, "_pause_windows_gateways_for_update", lambda: None)
+        monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+        monkeypatch.setattr(hm.sys, "prefix", "/usr")
+        monkeypatch.setattr(hm.sys, "base_prefix", "/usr")
+        monkeypatch.setattr(hm, "_is_windows", lambda: True)
+        monkeypatch.setattr(hm.os, "getpid", lambda: 12345)
 
-    called = {"pip": False}
+        hm._cmd_update_pip(mock_args)
 
-    def fake_pip_update(_args):
-        called["pip"] = True
+        assert mock_popen.call_count == 1
+        helper_cmd = mock_popen.call_args.args[0]
+        assert helper_cmd[0] == hm.sys.executable
+        assert helper_cmd[1] == "-c"
+        helper_script = helper_cmd[2]
+        assert "jiter" in helper_script or "psutil" in helper_script
+        assert "hermes-agent" in helper_script
+        kwargs = mock_popen.call_args.kwargs
+        assert kwargs["creationflags"] == (
+            hm.subprocess.DETACHED_PROCESS | hm.subprocess.CREATE_NEW_PROCESS_GROUP
+        )
 
-    def fail_git_run(*_args, **_kwargs):
-        raise AssertionError("git path should not run when detect_install_method() returns 'pip'")
+    @patch("shutil.which", return_value="/usr/bin/uv")
+    @patch("subprocess.run")
+    def test_update_pip_venv_windows_still_runs_in_process(
+        self, mock_run, _mock_which, mock_args, monkeypatch
+    ):
+        from hermes_cli import main as hm
 
-    monkeypatch.setattr(hm, "_cmd_update_pip", fake_pip_update)
-    monkeypatch.setattr(hm.subprocess, "run", fail_git_run)
-    monkeypatch.setattr("hermes_cli.config.detect_install_method", lambda _root: "pip")
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+        monkeypatch.setattr(hm.sys, "prefix", "/tmp/hermes-launcher-venv")
+        monkeypatch.setattr(hm.sys, "base_prefix", "/usr")
+        monkeypatch.setattr(hm, "_is_windows", lambda: True)
 
-    hm._cmd_update_impl(SimpleNamespace(yes=True, force=True), gateway_mode=False)
+        hm._cmd_update_pip(mock_args)
 
-    assert called["pip"] is True
+        assert mock_run.call_count == 1
+
+
+class TestCmdUpdateRouting:
+    """Routing tests that live outside TestCmdUpdatePip."""
+
+    def test_cmd_update_prefers_pip_install_method_over_git_dir(self, monkeypatch, tmp_path):
+        """A pip install method must bypass git update even when .git exists."""
+        from hermes_cli import main as hm
+
+        (tmp_path / ".git").mkdir()
+        monkeypatch.setattr(hm, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(hm, "_run_pre_update_backup", lambda _args: None)
+        monkeypatch.setattr(hm, "_pause_windows_gateways_for_update", lambda: None)
+
+        called = {"pip": False}
+
+        def fake_pip_update(_args):
+            called["pip"] = True
+
+        def fail_git_run(*_args, **_kwargs):
+            raise AssertionError("git path should not run when detect_install_method() returns 'pip'")
+
+        monkeypatch.setattr(hm, "_cmd_update_pip", fake_pip_update)
+        monkeypatch.setattr(hm.subprocess, "run", fail_git_run)
+        monkeypatch.setattr("hermes_cli.config.detect_install_method", lambda _root: "pip")
+
+        hm._cmd_update_impl(SimpleNamespace(yes=True, force=True), gateway_mode=False)
+
+        assert called["pip"] is True
 
 
 class TestCmdUpdateBranchFallback:

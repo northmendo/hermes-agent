@@ -258,6 +258,7 @@ import json
 import shutil
 import stat
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -268,6 +269,7 @@ from hermes_cli.subcommands.gateway import build_gateway_parser
 from hermes_cli.subcommands.profile import build_profile_parser
 from hermes_cli.subcommands.model import build_model_parser
 from hermes_cli.subcommands.setup import build_setup_parser
+
 from hermes_cli.subcommands.postinstall import build_postinstall_parser
 from hermes_cli.subcommands.whatsapp import build_whatsapp_parser
 from hermes_cli.subcommands.slack import build_slack_parser
@@ -8452,6 +8454,55 @@ def cmd_update(args):
     finally:
         _finalize_update_output(_update_io_state)
 
+def _spawn_detached_windows_update(cmd: list[str], env: dict[str, str] | None = None) -> None:
+    """Hand off a pip-style update to a detached helper process on Windows.
+
+    The running ``hermes`` process may have native extension modules
+    (e.g. ``jiter``) loaded from site-packages. On Windows those ``.pyd``
+    files are locked while in use, so an in-process ``pip install
+    --reinstall`` or ``uv pip install --reinstall`` fails with
+    ``Access is denied``. We spawn a tiny helper that waits for this
+    process to exit and then performs the install.
+    """
+    parent_pid = os.getpid()
+    log_path = Path(tempfile.gettempdir()) / f"hermes-update-helper-{parent_pid}.log"
+
+    script = (
+        "import os, subprocess, sys, time\n"
+        f"cmd = {cmd!r}\n"
+        f"env_override = {env!r}\n"
+        f"parent_pid = {parent_pid}\n"
+        f"log_path = {str(log_path)!r}\n"
+        "env = dict(os.environ, **env_override) if env_override else None\n"
+        "with open(log_path, 'w', encoding='utf-8') as log:\n"
+        "    try:\n"
+        "        import psutil\n"
+        "        try:\n"
+        "            p = psutil.Process(parent_pid)\n"
+        "            for _ in range(120):\n"
+        "                if not p.is_running():\n"
+        "                    break\n"
+        "                time.sleep(0.5)\n"
+        "        except psutil.NoSuchProcess:\n"
+        "            pass\n"
+        "    except Exception:\n"
+        "        time.sleep(3)\n"
+        "    log.write(f'Running: {\" \".join(cmd)}\\n')\n"
+        "    result = subprocess.run(cmd, env=env, stdout=log, stderr=subprocess.STDOUT)\n"
+        "    log.write(f'Exit code: {result.returncode}\\n')\n"
+        "    sys.exit(result.returncode)\n"
+    )
+
+    helper_cmd = [sys.executable, "-c", script]
+    subprocess.Popen(
+        helper_cmd,
+        creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        close_fds=True,
+    )
+
 
 def _cmd_update_pip(args):
     """Update Hermes via pip (for PyPI installs)."""
@@ -8479,13 +8530,16 @@ def _cmd_update_pip(args):
     # set it for them.
     export_virtualenv = False
 
-    if is_uv_tool_install():
+    uv_tool_install = is_uv_tool_install()
+    pipx_update = bool(pipx_managed and pipx)
+
+    if uv_tool_install:
         if not uv:
             print("✗ Detected a uv-tool install but managed uv install failed.")
             print("  Install uv manually: https://docs.astral.sh/uv/getting-started/installation/")
             sys.exit(1)
         cmd = [uv, "tool", "upgrade", "hermes-agent"]
-    elif pipx_managed and pipx:
+    elif pipx_update:
         # pipx owns its own venv; ``pipx upgrade`` is the only correct path.
         # Matches scripts/auto-update.sh, which already uses pipx upgrade.
         cmd = [pipx, "upgrade", "hermes-agent"]
@@ -8506,6 +8560,20 @@ def _cmd_update_pip(args):
     run_kwargs = {}
     if export_virtualenv:
         run_kwargs["env"] = {**os.environ, "VIRTUAL_ENV": sys.prefix}
+
+    # On Windows, installing into the running system interpreter's
+    # site-packages while the process holds loaded native extensions (e.g.
+    # ``jiter.cp312-win_amd64.pyd``) will fail with "Access is denied".
+    # Hand off to a detached helper that waits for this process to exit
+    # before performing the reinstall.
+    if _is_windows() and not uv_tool_install and not pipx_update and not in_venv:
+        print("→ Spawning detached update helper (Windows file-lock workaround)...")
+        _spawn_detached_windows_update(cmd, env=run_kwargs.get("env"))
+        print("✓ Update helper launched. It will complete after this process exits.")
+        print(f"  Helper log: {Path(tempfile.gettempdir()) / f'hermes-update-helper-{os.getpid()}.log'}")
+        print("  Restart hermes to use the new version.")
+        return
+
     result = subprocess.run(cmd, **run_kwargs)
     if result.returncode != 0:
         print("✗ Update failed")
