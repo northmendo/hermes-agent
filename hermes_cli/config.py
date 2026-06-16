@@ -13,6 +13,7 @@ This module provides:
 """
 
 import copy
+from importlib import metadata
 import json
 import logging
 import os
@@ -350,14 +351,58 @@ def get_managed_update_command() -> Optional[str]:
     return None
 
 
+def _has_remote_vcs_pip_metadata(distribution_name: str = "hermes-agent") -> bool:
+    """Return True when package metadata says Hermes was pip-installed from VCS.
+
+    PEP 610 writes ``direct_url.json`` for direct URL installs, including
+    ``pip install git+https://...``. That signal is stronger than a nearby
+    ``.git`` directory because users can leave stale source checkouts under
+    HERMES_HOME after switching install methods.
+    """
+    try:
+        dist = metadata.distribution(distribution_name)
+    except Exception:
+        return False
+
+    try:
+        direct_url_text = dist.read_text("direct_url.json")
+    except Exception:
+        return False
+    if not direct_url_text:
+        return False
+
+    try:
+        direct_url = json.loads(direct_url_text)
+    except (TypeError, ValueError):
+        return False
+
+    vcs_info = direct_url.get("vcs_info")
+    url = str(direct_url.get("url", ""))
+    if not isinstance(vcs_info, dict):
+        return False
+
+    return url.startswith(("https://", "http://", "ssh://", "git@"))
+
+
+def _project_root_is_site_packages(project_root: Path) -> bool:
+    """Return True when project_root is inside a site-packages directory."""
+    try:
+        parts = project_root.resolve().parts
+    except OSError:
+        parts = project_root.parts
+    return "site-packages" in parts
+
+
 def detect_install_method(project_root: Optional[Path] = None) -> str:
     """Detect how Hermes was installed: 'docker', 'nixos', 'homebrew', 'git', or 'pip'.
 
     Resolution order:
     1. Stamped ``~/.hermes/.install_method`` file (written by installers)
     2. HERMES_MANAGED env / .managed marker (NixOS, Homebrew)
-    3. .git directory presence -> 'git'
-    4. Fallback -> 'pip'
+    3. Remote pip VCS metadata from PEP 610 direct_url.json
+    4. site-packages runtime path -> 'pip'
+    5. .git directory presence -> 'git'
+    6. Fallback -> 'pip'
 
     Note: running inside a container is NOT treated as "docker" on its own.
     The two supported install paths both self-identify via the
@@ -371,7 +416,12 @@ def detect_install_method(project_root: Optional[Path] = None) -> str:
     wrongly classified as the published image by bare container detection,
     so ``hermes update`` bailed with "doesn't apply inside the Docker
     container". Without that fallback such installs fall through to the
-    ``.git``/pip checks and behave like any off-path install. See issue #34397.
+    git/pip checks and behave like any off-path install. See issue #34397.
+
+    Direct ``pip install git+https://...`` does not create the stamp file, but
+    pip does write ``direct_url.json`` metadata. That signal must beat a stale
+    ``.git`` directory so ``hermes update`` takes the reinstall path instead of
+    pulling upstream commits from an old checkout.
     """
     stamp = get_hermes_home() / ".install_method"
     try:
@@ -385,6 +435,10 @@ def detect_install_method(project_root: Optional[Path] = None) -> str:
         return managed.lower().replace(" ", "-")
     if project_root is None:
         project_root = Path(__file__).parent.parent.resolve()
+    if _has_remote_vcs_pip_metadata():
+        return "pip"
+    if _project_root_is_site_packages(project_root):
+        return "pip"
     if (project_root / ".git").is_dir():
         return "git"
     return "pip"
