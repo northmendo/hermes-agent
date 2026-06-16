@@ -8467,6 +8467,7 @@ def _spawn_detached_windows_update(cmd: list[str], env: dict[str, str] | None = 
         f"log_path = {str(log_path)!r}\n"
         "env = dict(os.environ, **env_override) if env_override else None\n"
         "with open(log_path, 'w', encoding='utf-8') as log:\n"
+        "    log.write('Hermes update helper started\\n')\n"
         "    try:\n"
         "        import psutil\n"
         "        try:\n"
@@ -8480,7 +8481,11 @@ def _spawn_detached_windows_update(cmd: list[str], env: dict[str, str] | None = 
         "    except Exception:\n"
         "        time.sleep(3)\n"
         "    log.write(f'Running: {\" \".join(cmd)}\\n')\n"
-        "    result = subprocess.run(cmd, env=env, stdout=log, stderr=subprocess.STDOUT)\n"
+        "    log.flush()\n"
+        "    result = subprocess.run(\n"
+        "        cmd, env=env, stdout=log, stderr=subprocess.STDOUT,\n"
+        "        creationflags=subprocess.CREATE_NO_WINDOW,\n"
+        "    )\n"
         "    log.write(f'Exit code: {result.returncode}\\n')\n"
         "    sys.exit(result.returncode)\n"
     )
@@ -8488,7 +8493,7 @@ def _spawn_detached_windows_update(cmd: list[str], env: dict[str, str] | None = 
     helper_cmd = [sys.executable, "-c", script]
     subprocess.Popen(
         helper_cmd,
-        creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+        creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,

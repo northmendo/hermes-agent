@@ -147,7 +147,7 @@ class TestCmdUpdatePip:
         assert _fork_install_target() in helper_script
         kwargs = mock_popen.call_args.kwargs
         assert kwargs["creationflags"] == (
-            hm.subprocess.DETACHED_PROCESS | hm.subprocess.CREATE_NEW_PROCESS_GROUP
+            hm.subprocess.CREATE_NO_WINDOW | hm.subprocess.CREATE_NEW_PROCESS_GROUP
         )
 
     @patch("shutil.which", return_value="/usr/bin/uv")
