@@ -64,6 +64,10 @@ source ~/.bashrc    # reload shell (or: source ~/.zshrc)
 hermes              # start chatting!
 ```
 
+## Personal fork install
+
+If you are using the `northmendo` personal QoL bundle, see [docs/fork/northmendo-qol-bundle.md](docs/fork/northmendo-qol-bundle.md) for branch layout, install command, and update notes.
+
 ---
 
 ## Getting Started
