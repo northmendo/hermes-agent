@@ -6246,6 +6246,53 @@ OFFICIAL_REPO_URLS = {
 OFFICIAL_REPO_URL = "https://github.com/NousResearch/hermes-agent.git"
 SKIP_UPSTREAM_PROMPT_FILE = ".skip_upstream_prompt"
 
+FORK_REPO_URL = "https://github.com/northmendo/hermes-agent.git"
+FORK_BUNDLE_BRANCH = "feat/northmendo-qol-bundle"
+FORK_INSTALL_COMMAND = (
+    "pip install --force-reinstall "
+    "git+https://github.com/northmendo/hermes-agent.git@feat/northmendo-qol-bundle"
+)
+
+
+def _is_stale_upstream_clone(repo_dir: Path) -> bool:
+    """True if repo_dir is a git checkout whose origin is the upstream Nous repo."""
+    if not (repo_dir / ".git").is_dir():
+        return False
+    try:
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            return False
+        origin = result.stdout.strip()
+        return not _is_fork(origin)
+    except Exception:
+        return False
+
+
+def _prompt_remove_stale_clone(repo_dir: Path, *, input_fn=None) -> bool:
+    """Ask the user whether to archive a stale upstream clone."""
+    print("⚠ Found an old Hermes git clone that points to the upstream NousResearch repo:")
+    print(f"  {repo_dir}")
+    print()
+    print("Your current install is from the northmendo fork bundle branch.")
+    print("Keeping this old clone can make `hermes update` and the banner report incorrect "
+          "commit counts.")
+    print()
+    prompt = "Archive the old clone and switch updates to the fork? [Y/n]: "
+    try:
+        if input_fn is not None:
+            response = input_fn(prompt).strip().lower()
+        else:
+            response = input(prompt).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    return response in {"", "y", "yes"}
+
 
 def _get_origin_url(git_cmd: list[str], cwd: Path) -> Optional[str]:
     """Get the URL of the origin remote, or None if not set."""
