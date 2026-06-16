@@ -2,6 +2,10 @@
   <img src="assets/banner.png" alt="Hermes Agent" width="100%">
 </p>
 
+> **This is a personal fork maintained by [northmendo](https://github.com/northmendo).** It adds a curated QoL bundle on top of the upstream Nous Research agent. The original README content is preserved below. For fork-specific install instructions, see the [northmendo QoL bundle docs](docs/fork/northmendo-qol-bundle.md).
+
+---
+
 # Hermes Agent ☤
 <p align="center">
   <a href="https://hermes-agent.nousresearch.com/">Hermes Agent</a> | <a href="https://hermes-agent.nousresearch.com/">Hermes Desktop</a>
@@ -63,10 +67,6 @@ After installation:
 source ~/.bashrc    # reload shell (or: source ~/.zshrc)
 hermes              # start chatting!
 ```
-
-## Personal fork install
-
-If you are using the `northmendo` personal QoL bundle, see [docs/fork/northmendo-qol-bundle.md](docs/fork/northmendo-qol-bundle.md) for branch layout, install command, and update notes.
 
 ---
 
