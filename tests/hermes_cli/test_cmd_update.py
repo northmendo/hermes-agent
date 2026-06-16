@@ -9,6 +9,13 @@ import pytest
 from hermes_cli.main import cmd_update, PROJECT_ROOT
 
 
+def _fork_install_target() -> str:
+    """Return the moving fork branch target used by fork-aware pip updates."""
+    from hermes_cli.main import FORK_INSTALL_COMMAND
+
+    return FORK_INSTALL_COMMAND.split()[-1]
+
+
 def _make_run_side_effect(branch="main", verify_ok=True, commit_count="0"):
     """Build a side_effect function for subprocess.run that simulates git commands."""
 
@@ -88,7 +95,14 @@ class TestCmdUpdatePip:
         hm._cmd_update_pip(mock_args)
 
         assert mock_run.call_count == 1
-        assert mock_run.call_args.args[0] == ["/usr/bin/uv", "pip", "install", "--upgrade", "hermes-agent"]
+        assert mock_run.call_args.args[0] == [
+            "/usr/bin/uv",
+            "pip",
+            "install",
+            "--upgrade",
+            "--reinstall",
+            _fork_install_target(),
+        ]
         assert mock_run.call_args.kwargs["env"]["VIRTUAL_ENV"] == "/tmp/hermes-launcher-venv"
 
     @patch("shutil.which", return_value="/usr/bin/uv")
@@ -107,6 +121,64 @@ class TestCmdUpdatePip:
 
         assert mock_run.call_count == 1
         assert "env" not in mock_run.call_args.kwargs
+
+
+def test_find_stale_upstream_clone_checks_profile_clone_first(tmp_path, monkeypatch):
+    from hermes_cli import main as hm
+
+    hermes_home = tmp_path / "profile"
+    project_root = tmp_path / "running-code"
+    profile_clone = hermes_home / "hermes-agent"
+    checked = []
+
+    monkeypatch.setattr(hm, "get_hermes_home", lambda: hermes_home)
+    monkeypatch.setattr(hm, "PROJECT_ROOT", project_root)
+
+    def fake_is_stale(path):
+        checked.append(path)
+        return path == profile_clone
+
+    monkeypatch.setattr(hm, "_is_stale_upstream_clone", fake_is_stale)
+
+    assert hm._find_stale_upstream_clone() == profile_clone
+    assert checked == [profile_clone]
+
+
+def test_find_stale_upstream_clone_falls_back_to_project_root(tmp_path, monkeypatch):
+    from hermes_cli import main as hm
+
+    hermes_home = tmp_path / "profile"
+    project_root = tmp_path / "running-code"
+    profile_clone = hermes_home / "hermes-agent"
+    checked = []
+
+    monkeypatch.setattr(hm, "get_hermes_home", lambda: hermes_home)
+    monkeypatch.setattr(hm, "PROJECT_ROOT", project_root)
+
+    def fake_is_stale(path):
+        checked.append(path)
+        return path == project_root
+
+    monkeypatch.setattr(hm, "_is_stale_upstream_clone", fake_is_stale)
+
+    assert hm._find_stale_upstream_clone() == project_root
+    assert checked == [profile_clone, project_root]
+
+
+def test_is_stale_upstream_clone_ignores_empty_origin(tmp_path, monkeypatch):
+    import subprocess
+    from hermes_cli import main as hm
+
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+
+    def fake_run(cmd, **kwargs):
+        assert cmd == ["git", "remote", "get-url", "origin"]
+        return subprocess.CompletedProcess(cmd, 0, stdout="\n", stderr="")
+
+    monkeypatch.setattr(hm.subprocess, "run", fake_run)
+
+    assert hm._is_stale_upstream_clone(repo_dir) is False
 
 
 class TestCmdUpdateBranchFallback:
@@ -199,7 +271,10 @@ class TestCmdUpdateBranchFallback:
         ), patch.object(hm, "_sync_with_upstream_if_needed") as sync_mock:
             cmd_update(mock_args)
 
-        sync_mock.assert_called_once_with(["git"], PROJECT_ROOT)
+        expected_git_cmd = ["git"]
+        if hm.sys.platform == "win32":
+            expected_git_cmd = ["git", "-c", "windows.appendAtomically=false"]
+        sync_mock.assert_called_once_with(expected_git_cmd, PROJECT_ROOT)
         captured = capsys.readouterr()
         assert "Already up to date!" in captured.out
 

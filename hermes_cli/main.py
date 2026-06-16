@@ -6268,7 +6268,7 @@ def _is_stale_upstream_clone(repo_dir: Path) -> bool:
         if result.returncode != 0:
             return False
         origin = result.stdout.strip()
-        return not _is_fork(origin)
+        return bool(origin) and not _is_fork(origin)
     except Exception:
         return False
 
@@ -6292,6 +6292,29 @@ def _prompt_remove_stale_clone(repo_dir: Path, *, input_fn=None) -> bool:
         print()
         return False
     return response in {"", "y", "yes"}
+
+
+def _find_stale_upstream_clone() -> Optional[Path]:
+    """Return the stale upstream clone to archive, if one exists.
+
+    Profile-scoped installs keep their legacy source checkout under
+    ``$HERMES_HOME/hermes-agent``. Check that location before falling back to
+    the running code path so pip-installed fork bundles can still find and
+    archive the stale upstream clone they replaced.
+    """
+    profile_clone = get_hermes_home() / "hermes-agent"
+    seen: set[str] = set()
+    for candidate in (profile_clone, PROJECT_ROOT):
+        try:
+            key = str(candidate.resolve())
+        except Exception:
+            key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        if _is_stale_upstream_clone(candidate):
+            return candidate
+    return None
 
 
 def _get_origin_url(git_cmd: list[str], cwd: Path) -> Optional[str]:
@@ -8393,16 +8416,94 @@ def cmd_update(args):
         _finalize_update_output(_update_io_state)
 
 
+def _fork_install_target() -> str:
+    """Return the direct VCS target for the northmendo fork bundle branch."""
+    return FORK_INSTALL_COMMAND.split()[-1]
+
+
+def _apply_fork_pip_update_target(cmd: list[str]) -> None:
+    """Redirect pip-style update commands from PyPI to the fork bundle branch.
+
+    Keep the install-manager decision intact: uv-tool and pipx installs still
+    use their named-environment upgrade commands. Only pip-style installs get
+    the direct moving-branch target. The explicit reinstall flags matter
+    because the fork bundle branch can move without changing the package
+    version.
+    """
+    try:
+        target_index = cmd.index("hermes-agent")
+    except ValueError:
+        return
+
+    cmd[target_index] = _fork_install_target()
+    if len(cmd) >= 3 and cmd[1:3] == ["pip", "install"]:
+        if "--reinstall" not in cmd:
+            cmd.insert(target_index, "--reinstall")
+    elif len(cmd) >= 4 and cmd[1:4] == ["-m", "pip", "install"]:
+        if "--force-reinstall" not in cmd:
+            cmd.insert(target_index, "--force-reinstall")
+
+
 def _cmd_update_pip(args):
-    """Update Hermes via pip from the northmendo fork bundle branch."""
+    """Update Hermes via pip-style install paths, targeting the fork bundle."""
     from hermes_cli import __version__
+    from hermes_cli.config import is_uv_tool_install
 
     print(f"→ Current version: {__version__}")
     print("→ Updating from northmendo fork bundle branch...")
-    print(f"→ Running: {FORK_INSTALL_COMMAND}")
 
-    cmd = FORK_INSTALL_COMMAND.split()
-    result = subprocess.run(cmd)
+    from hermes_cli.managed_uv import ensure_uv, update_managed_uv
+
+    # Keep managed uv current before using it.
+    update_managed_uv()
+
+    uv = ensure_uv()
+    in_venv = sys.prefix != sys.base_prefix
+    # pipx-managed installs live under .../pipx/venvs/<name>/...
+    prefix_parts = sys.prefix.replace("\\", "/").split("/")
+    pipx_managed = "pipx" in prefix_parts
+    pipx = shutil.which("pipx") if pipx_managed else None
+
+    # Only the ``uv pip install`` path inside a venv needs VIRTUAL_ENV
+    # exported (uv refuses to install without it when the launcher shim
+    # didn't activate the venv). ``uv tool upgrade`` / ``pipx upgrade``
+    # operate on a named environment and ignore VIRTUAL_ENV, so we don't
+    # set it for them.
+    export_virtualenv = False
+    uv_tool_install = is_uv_tool_install()
+    pipx_update = bool(pipx_managed and pipx)
+
+    if uv_tool_install:
+        if not uv:
+            print("✗ Detected a uv-tool install but managed uv install failed.")
+            print("  Install uv manually: https://docs.astral.sh/uv/getting-started/installation/")
+            sys.exit(1)
+        cmd = [uv, "tool", "upgrade", "hermes-agent"]
+    elif pipx_update:
+        # pipx owns its own venv; ``pipx upgrade`` is the only correct path.
+        # Matches scripts/auto-update.sh, which already uses pipx upgrade.
+        cmd = [pipx, "upgrade", "hermes-agent"]
+    elif uv:
+        cmd = [uv, "pip", "install", "--upgrade", "hermes-agent"]
+        if in_venv:
+            # Launcher shim runs the venv interpreter but doesn't export
+            # VIRTUAL_ENV; without it uv errors "No virtual environment found".
+            export_virtualenv = True
+        else:
+            # Outside any venv, ``--system`` lets uv target the active
+            # interpreter, matching pip's default behaviour.
+            cmd.insert(3, "--system")
+    else:
+        cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "hermes-agent"]
+
+    if not uv_tool_install and not pipx_update:
+        _apply_fork_pip_update_target(cmd)
+
+    print(f"→ Running: {' '.join(cmd)}")
+    run_kwargs = {}
+    if export_virtualenv:
+        run_kwargs["env"] = {**os.environ, "VIRTUAL_ENV": sys.prefix}
+    result = subprocess.run(cmd, **run_kwargs)
     if result.returncode != 0:
         print("✗ Update failed")
         sys.exit(1)
@@ -8480,11 +8581,12 @@ def _cmd_update_impl(args, gateway_mode: bool):
     # If the user previously installed from upstream and then switched to the
     # northmendo fork bundle, the old upstream git clone can confuse update
     # checks and banner counts. Offer to archive it once.
-    if _is_stale_upstream_clone(PROJECT_ROOT):
-        if _prompt_remove_stale_clone(PROJECT_ROOT, input_fn=gw_input_fn):
-            backup_path = PROJECT_ROOT.with_name(PROJECT_ROOT.name + ".old")
+    stale_clone_dir = _find_stale_upstream_clone()
+    if stale_clone_dir is not None:
+        if _prompt_remove_stale_clone(stale_clone_dir, input_fn=gw_input_fn):
+            backup_path = stale_clone_dir.with_name(stale_clone_dir.name + ".old")
             try:
-                PROJECT_ROOT.rename(backup_path)
+                stale_clone_dir.rename(backup_path)
                 print(f"  ✓ Archived old clone to: {backup_path}")
                 print("  Future updates will use the pip reinstall path from the fork.")
             except Exception as exc:

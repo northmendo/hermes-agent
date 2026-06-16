@@ -343,14 +343,19 @@ def check_for_updates() -> Optional[int]:
         # Prefer the running code's location over the profile-scoped path.
         # $HERMES_HOME/hermes-agent/ may be a stale copy from --clone-all;
         # Path(__file__) always resolves to the actual installed checkout.
-        repo_dir = Path(__file__).parent.parent.resolve()
+        running_repo_dir = Path(__file__).parent.parent.resolve()
+        profile_repo_dir = hermes_home / "hermes-agent"
+        repo_dir = running_repo_dir
+        using_profile_fallback = False
         if not (repo_dir / ".git").exists():
-            repo_dir = hermes_home / "hermes-agent"
+            repo_dir = profile_repo_dir
+            using_profile_fallback = True
         if not (repo_dir / ".git").exists():
             behind = check_via_pypi()
-        elif _is_stale_upstream_clone_for_banner(repo_dir):
-            # Running from fork but profile has stale upstream clone.
-            # Don't report misleading upstream commit counts.
+        elif using_profile_fallback and _is_stale_upstream_clone_for_banner(repo_dir):
+            # Profile-scoped fallback is an old upstream clone while the active
+            # install is the fork bundle. Don't report misleading upstream
+            # commit counts.
             behind = 0
         else:
             behind = _check_via_local_git(repo_dir)
