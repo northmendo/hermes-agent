@@ -1,4 +1,15 @@
+import json
 from unittest.mock import patch
+
+
+class _FakeDistribution:
+    def __init__(self, direct_url):
+        self._direct_url = direct_url
+
+    def read_text(self, filename):
+        if filename == "direct_url.json":
+            return json.dumps(self._direct_url)
+        return None
 
 
 def test_pip_install_detected_when_no_git_dir(tmp_path):
@@ -18,6 +29,59 @@ def test_git_install_detected_when_git_dir_exists(tmp_path):
         from hermes_cli.config import detect_install_method
         method = detect_install_method(project_root=tmp_path)
         assert method == "git"
+
+
+def test_remote_vcs_pip_metadata_takes_precedence_over_git_dir(tmp_path):
+    """pip install git+https://... is pip even when project_root has .git.
+
+    Regression: direct pip installs do not write .install_method. When the
+    running package lives under an old git checkout, .git used to force the
+    git update path and fetch thousands of upstream commits.
+    """
+    (tmp_path / ".git").mkdir()
+    fake_dist = _FakeDistribution(
+        {
+            "url": "https://github.com/northmendo/hermes-agent.git",
+            "vcs_info": {
+                "vcs": "git",
+                "requested_revision": "feat/northmendo-qol-bundle",
+                "commit_id": "abc123",
+            },
+        }
+    )
+    with patch("hermes_cli.config.get_managed_system", return_value=None), \
+         patch("hermes_cli.config.get_hermes_home", return_value=tmp_path), \
+         patch("hermes_cli.config.metadata.distribution", return_value=fake_dist):
+        from hermes_cli.config import detect_install_method
+        assert detect_install_method(project_root=tmp_path) == "pip"
+
+
+def test_local_editable_metadata_does_not_override_git_dir(tmp_path):
+    """Local editable installs in a git checkout stay on the git update path."""
+    (tmp_path / ".git").mkdir()
+    fake_dist = _FakeDistribution(
+        {
+            "url": tmp_path.as_uri(),
+            "dir_info": {"editable": True},
+        }
+    )
+    with patch("hermes_cli.config.get_managed_system", return_value=None), \
+         patch("hermes_cli.config.get_hermes_home", return_value=tmp_path), \
+         patch("hermes_cli.config.metadata.distribution", return_value=fake_dist):
+        from hermes_cli.config import detect_install_method
+        assert detect_install_method(project_root=tmp_path) == "git"
+
+
+def test_site_packages_project_root_takes_precedence_over_git_dir(tmp_path):
+    """A package loaded from site-packages is pip-managed, even with .git."""
+    site_packages = tmp_path / "venv" / "Lib" / "site-packages"
+    site_packages.mkdir(parents=True)
+    (site_packages / ".git").mkdir()
+    with patch("hermes_cli.config.get_managed_system", return_value=None), \
+         patch("hermes_cli.config.get_hermes_home", return_value=tmp_path), \
+         patch("hermes_cli.config.metadata.distribution", side_effect=Exception):
+        from hermes_cli.config import detect_install_method
+        assert detect_install_method(project_root=site_packages) == "pip"
 
 
 def test_managed_install_takes_precedence(tmp_path):
