@@ -8476,6 +8476,25 @@ def _cmd_update_impl(args, gateway_mode: bool):
     # Try git-based update first, fall back to ZIP download on Windows
     # when git file I/O is broken (antivirus, NTFS filter drivers, etc.)
     use_zip_update = False
+
+    # If the user previously installed from upstream and then switched to the
+    # northmendo fork bundle, the old upstream git clone can confuse update
+    # checks and banner counts. Offer to archive it once.
+    if _is_stale_upstream_clone(PROJECT_ROOT):
+        if _prompt_remove_stale_clone(PROJECT_ROOT, input_fn=gw_input_fn):
+            backup_path = PROJECT_ROOT.with_name(PROJECT_ROOT.name + ".old")
+            try:
+                PROJECT_ROOT.rename(backup_path)
+                print(f"  ✓ Archived old clone to: {backup_path}")
+                print("  Future updates will use the pip reinstall path from the fork.")
+            except Exception as exc:
+                print(f"  ✗ Could not archive old clone: {exc}")
+                print("  You can manually rename it and rerun `hermes update`.")
+                sys.exit(1)
+        else:
+            print("  ℹ Keeping old clone. `hermes update` may continue to use it.")
+        print()
+
     git_dir = PROJECT_ROOT / ".git"
 
     if not git_dir.exists():
