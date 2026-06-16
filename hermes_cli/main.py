@@ -8582,15 +8582,21 @@ def _cmd_update_impl(args, gateway_mode: bool):
     use_zip_update = False
     git_dir = PROJECT_ROOT / ".git"
 
+    # Always check install method first, even if .git exists.
+    # A pip install may live inside an old git clone directory (e.g. a
+    # venv created inside a previous upstream checkout).  If we blindly
+    # trust the .git directory we end up pulling upstream commits the
+    # user no longer wants.
+    from hermes_cli.config import detect_install_method
+    method = detect_install_method(PROJECT_ROOT)
+    if method == "pip":
+        _cmd_update_pip(args)
+        return
+
     if not git_dir.exists():
         if sys.platform == "win32":
             use_zip_update = True
         else:
-            from hermes_cli.config import detect_install_method
-            method = detect_install_method(PROJECT_ROOT)
-            if method == "pip":
-                _cmd_update_pip(args)
-                return
             print("✗ Not a git repository. Please reinstall:")
             print(
                 "  curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash"
