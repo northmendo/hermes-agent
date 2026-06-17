@@ -6,9 +6,9 @@ name: Upstream Sync Check
 
 on:
   schedule:
-    # 06:00 Pacific ~= 13:00 UTC (PDT) / 14:00 UTC (PST)
-    # Every 8 hours: 13:00, 21:00, 05:00 UTC
-    - cron: '0 13,21,5 * * *'
+    # GitHub Actions cron uses UTC. Run every 6 hours starting at 06:00 UTC:
+    # 06:00, 12:00, 18:00, 00:00 UTC.
+    - cron: '0 0,6,12,18 * * *'
   workflow_dispatch:
 
 permissions:
