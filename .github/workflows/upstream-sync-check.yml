@@ -1,0 +1,73 @@
+name: Upstream Sync Check
+
+# Rebase northmendo/main onto NousResearch/hermes-agent:main so the fork install
+# channel stays current while retaining fork-only commits on top. If the rebase
+# conflicts, the job fails and requires manual resolution.
+
+on:
+  schedule:
+    # 06:00 Pacific ~= 13:00 UTC (PDT) / 14:00 UTC (PST)
+    # Every 8 hours: 13:00, 21:00, 05:00 UTC
+    - cron: '0 13,21,5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync-main:
+    if: github.repository == 'northmendo/hermes-agent'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream and fetch
+        run: |
+          git remote add upstream https://github.com/NousResearch/hermes-agent.git
+          git fetch origin main
+          git fetch upstream main
+
+      - name: Rebase main onto upstream
+        id: rebase
+        run: |
+          git checkout -B main origin/main
+          BEHIND=$(git rev-list --count HEAD..upstream/main)
+          echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
+
+          if [ "$BEHIND" -eq 0 ]; then
+            echo "status=synced" >> "$GITHUB_OUTPUT"
+            echo "main already contains upstream/main."
+            exit 0
+          fi
+
+          echo "Rebasing main onto upstream/main ($BEHIND upstream commit(s) missing)..."
+          if git rebase upstream/main; then
+            echo "status=rebased" >> "$GITHUB_OUTPUT"
+            echo "Rebase succeeded."
+          else
+            echo "status=conflict" >> "$GITHUB_OUTPUT"
+            echo "Rebase failed. Conflicts need manual resolution."
+            git status --short
+            exit 1
+          fi
+
+      - name: Push rebased main
+        if: steps.rebase.outputs.status == 'rebased'
+        run: |
+          git push --force-with-lease origin main
+          echo "Pushed rebased main to origin."
+
+      - name: Report result
+        if: always()
+        run: |
+          echo "Status: ${{ steps.rebase.outputs.status }}"
+          echo "Behind: ${{ steps.rebase.outputs.behind }}"

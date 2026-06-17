@@ -121,8 +121,8 @@ _UPDATE_CHECK_CACHE_SECONDS = 6 * 3600
 # (e.g. nix-built hermes — no local git history to count against).
 UPDATE_AVAILABLE_NO_COUNT = -1
 
-_UPSTREAM_REPO_URL = "https://github.com/NousResearch/hermes-agent.git"
-_OFFICIAL_REPO_CANONICAL = "github.com/nousresearch/hermes-agent"
+_UPDATE_REPO_URL = "https://github.com/northmendo/hermes-agent.git"
+_UPDATE_REPO_CANONICAL = "github.com/northmendo/hermes-agent"
 
 
 def _canonical_github_remote(url: str | None) -> str:
@@ -151,8 +151,8 @@ def _is_ssh_remote(url: str | None) -> bool:
     return value.startswith("git@") or value.startswith("ssh://")
 
 
-def _is_official_ssh_remote(url: str | None) -> bool:
-    return _is_ssh_remote(url) and _canonical_github_remote(url) == _OFFICIAL_REPO_CANONICAL
+def _is_update_channel_ssh_remote(url: str | None) -> bool:
+    return _is_ssh_remote(url) and _canonical_github_remote(url) == _UPDATE_REPO_CANONICAL
 
 
 def _git_stdout(args: list[str], *, cwd: Path, timeout: int = 5) -> Optional[str]:
@@ -172,30 +172,30 @@ def _git_stdout(args: list[str], *, cwd: Path, timeout: int = 5) -> Optional[str
 
 
 def _check_via_rev(local_rev: str) -> Optional[int]:
-    """Compare an embedded git revision to upstream main via ls-remote.
+    """Compare an embedded git revision to the update channel via ls-remote.
 
     Returns 0 if up-to-date, ``UPDATE_AVAILABLE_NO_COUNT`` if behind,
     or ``None`` on failure.
     """
     try:
         result = subprocess.run(
-            ["git", "ls-remote", _UPSTREAM_REPO_URL, "refs/heads/main"],
+            ["git", "ls-remote", _UPDATE_REPO_URL, "refs/heads/main"],
             capture_output=True, text=True, timeout=10,
         )
     except Exception:
         return None
     if result.returncode != 0 or not result.stdout:
         return None
-    upstream_rev = result.stdout.split()[0]
-    if not upstream_rev:
+    remote_rev = result.stdout.split()[0]
+    if not remote_rev:
         return None
-    return 0 if upstream_rev == local_rev else UPDATE_AVAILABLE_NO_COUNT
+    return 0 if remote_rev == local_rev else UPDATE_AVAILABLE_NO_COUNT
 
 
 def _check_via_local_git(repo_dir: Path) -> Optional[int]:
     """Count commits behind origin/main in a local checkout."""
     origin_url = _git_stdout(["remote", "get-url", "origin"], cwd=repo_dir)
-    if _is_official_ssh_remote(origin_url):
+    if _is_update_channel_ssh_remote(origin_url):
         head_rev = _git_stdout(["rev-parse", "HEAD"], cwd=repo_dir)
         return _check_via_rev(head_rev) if head_rev else None
 
