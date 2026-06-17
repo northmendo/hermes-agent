@@ -313,6 +313,7 @@ class TestCmdUpdatePipInstallLayouts:
         # No venv: prefix == base_prefix.
         monkeypatch.setattr(hm.sys, "prefix", "/usr")
         monkeypatch.setattr(hm.sys, "base_prefix", "/usr")
+        monkeypatch.setattr(hm, "_is_windows", lambda: False)
 
         with patch("shutil.which", return_value="/usr/bin/uv"), \
              patch("hermes_cli.config.is_uv_tool_install", return_value=False):
