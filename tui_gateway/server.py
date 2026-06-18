@@ -3234,6 +3234,7 @@ def _background_agent_kwargs(agent, task_id: str) -> dict:
         ),
         "provider_data_collection": getattr(agent, "provider_data_collection", None),
         "openrouter_min_coding_score": getattr(agent, "openrouter_min_coding_score", None),
+        "openrouter_fusion_config": getattr(agent, "openrouter_fusion_config", None),
         "session_id": task_id,
         "reasoning_config": getattr(agent, "reasoning_config", None)
         or _load_reasoning_config(),
@@ -8448,6 +8449,22 @@ def _(rid, params: dict) -> dict:
             {"type": "send", "notice": notice, "message": state.goal},
         )
 
+    if name == "fusion":
+        try:
+            output, warning = _run_fusion_command_for_session(
+                arg,
+                params.get("session_id", ""),
+                session or {},
+            )
+        except ValueError as exc:
+            return _err(rid, 4004, str(exc))
+        except Exception as exc:
+            return _err(rid, 5001, str(exc))
+        payload = {"type": "exec", "output": output}
+        if warning:
+            payload["warning"] = warning
+        return _ok(rid, payload)
+
     if name == "undo":
         # /undo [N]: back up N user turns (default 1), soft-delete the
         # truncated rows on disk, and prefill the composer with the text
@@ -9298,6 +9315,45 @@ def _mirror_slash_side_effects(sid: str, session: dict, command: str) -> str:
     return ""
 
 
+def _run_fusion_command_for_session(arg: str, sid: str, session: dict) -> tuple[str, str]:
+    """Run /fusion config updates and refresh the idle live agent."""
+    from hermes_cli.openrouter_fusion import (
+        get_openrouter_fusion_settings,
+        handle_openrouter_fusion_command,
+    )
+
+    def _save(path: str, value):
+        _write_config_key(path, value)
+
+    output = handle_openrouter_fusion_command(
+        arg,
+        save_value=_save,
+        config=_load_cfg(),
+    )
+
+    lowered = (arg or "").strip().lower().replace("_", "-")
+    if lowered in {"show", "hide"}:
+        try:
+            from hermes_cli.models import clear_provider_models_cache
+
+            clear_provider_models_cache("openrouter")
+        except Exception:
+            pass
+
+    warning = ""
+    agent = session.get("agent")
+    if agent is not None:
+        if session.get("running"):
+            warning = "session busy - Fusion changes apply to the next turn"
+        else:
+            try:
+                agent.openrouter_fusion_config = get_openrouter_fusion_settings(_load_cfg())
+                _emit("session.info", sid, _session_info(agent, session))
+            except Exception as exc:
+                warning = f"live session sync failed: {exc}"
+    return output, warning
+
+
 @method("slash.exec")
 def _(rid, params: dict) -> dict:
     session, err = _sess(params, rid)
@@ -9362,6 +9418,22 @@ def _(rid, params: dict) -> dict:
             return _ok(rid, {"output": str(result or "(no output)")})
         except Exception as e:
             return _ok(rid, {"output": f"Plugin command error: {e}"})
+
+    if _cmd_base == "fusion":
+        try:
+            output, warning = _run_fusion_command_for_session(
+                _cmd_arg,
+                params.get("session_id", ""),
+                session,
+            )
+        except ValueError as exc:
+            return _err(rid, 4004, str(exc))
+        except Exception as exc:
+            return _err(rid, 5001, str(exc))
+        payload = {"output": output}
+        if warning:
+            payload["warning"] = warning
+        return _ok(rid, payload)
 
     worker = session.get("slash_worker")
     if not worker:

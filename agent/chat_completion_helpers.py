@@ -758,6 +758,7 @@ def build_api_kwargs(agent, api_messages: list) -> dict:
             # Context forwarded to profile hooks:
             provider_preferences=_prefs or None,
             openrouter_min_coding_score=agent.openrouter_min_coding_score,
+            openrouter_fusion_config=getattr(agent, "openrouter_fusion_config", None),
             anthropic_max_output=_ant_max,
             supports_reasoning=agent._supports_reasoning_extra_body(),
             qwen_session_metadata=_qwen_meta,
@@ -798,6 +799,7 @@ def build_api_kwargs(agent, api_messages: list) -> dict:
         ollama_num_ctx=agent._ollama_num_ctx,
         provider_preferences=_prefs or None,
         openrouter_min_coding_score=agent.openrouter_min_coding_score,
+        openrouter_fusion_config=getattr(agent, "openrouter_fusion_config", None),
         qwen_prepare_fn=agent._qwen_prepare_chat_messages if _is_qwen else None,
         qwen_prepare_inplace_fn=agent._qwen_prepare_chat_messages_inplace if _is_qwen else None,
         qwen_session_metadata=_qwen_meta,
@@ -1453,6 +1455,24 @@ def handle_max_iterations(agent, messages: list, api_call_count: int) -> str:
                     summary_extra_body["plugins"] = [
                         {"id": "pareto-router", "min_coding_score": _ps}
                     ]
+
+            if (
+                agent.model == "openrouter/fusion"
+                and (
+                    (agent.provider or "").strip().lower() == "openrouter"
+                    or agent._is_openrouter_url()
+                )
+            ):
+                try:
+                    from hermes_cli.openrouter_fusion import build_openrouter_fusion_plugin
+
+                    summary_extra_body["plugins"] = [
+                        build_openrouter_fusion_plugin(
+                            getattr(agent, "openrouter_fusion_config", None)
+                        )
+                    ]
+                except Exception:
+                    pass
 
             if summary_extra_body:
                 summary_kwargs["extra_body"] = summary_extra_body

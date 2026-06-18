@@ -97,7 +97,11 @@ def test_fetch_openrouter_models_all_uses_live_api_order(monkeypatch):
     ])
     models._openrouter_catalog_cache = None
 
-    assert models.fetch_openrouter_models(force_refresh=True) == [("z/model", ""), ("a/free", "free")]
+    assert models.fetch_openrouter_models(force_refresh=True) == [
+        ("z/model", ""),
+        ("openrouter/fusion", "multi-model analysis with Fusion router"),
+        ("a/free", "free"),
+    ]
 
 
 def test_fetch_openrouter_models_user_uses_user_filtered_api_order(monkeypatch):
@@ -110,10 +114,29 @@ def test_fetch_openrouter_models_user_uses_user_filtered_api_order(monkeypatch):
     ])
     models._openrouter_catalog_cache = None
 
-    assert models.fetch_openrouter_models(force_refresh=True) == [("my/model", "free")]
+    assert models.fetch_openrouter_models(force_refresh=True) == [
+        ("my/model", "free"),
+        ("openrouter/fusion", "multi-model analysis with Fusion router"),
+    ]
 
 
-def test_save_openrouter_model_list_source_updates_config(monkeypatch, tmp_path):
+def test_fetch_openrouter_models_can_hide_pinned_fusion(monkeypatch):
+    from hermes_cli import models
+
+    monkeypatch.setattr(models, "get_openrouter_model_list_source", lambda: "all")
+    monkeypatch.setattr(
+        "hermes_cli.openrouter_fusion.openrouter_show_fusion_model",
+        lambda config=None: False,
+    )
+    monkeypatch.setattr(models, "fetch_openrouter_live_items", lambda source, **kwargs: [
+        {"id": "z/model", "supported_parameters": ["tools"], "pricing": {"prompt": "0.1", "completion": "0.2"}},
+    ])
+    models._openrouter_catalog_cache = None
+
+    assert models.fetch_openrouter_models(force_refresh=True) == [("z/model", "")]
+
+
+def test_save_openrouter_model_list_source_updates_config(monkeypatch):
     from hermes_cli import config, models
 
     state = {"openrouter": {"response_cache": True}}

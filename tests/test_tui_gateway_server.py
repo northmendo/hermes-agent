@@ -4829,6 +4829,36 @@ def test_mirror_slash_compress_does_not_prelock_history(monkeypatch):
     assert ("session.info", "sid", {"model": "x"}) in emitted
 
 
+def test_run_fusion_command_updates_idle_agent(monkeypatch):
+    import types
+
+    cfg = {"openrouter": {"fusion": {"preset": "general-budget"}}}
+    emitted = []
+
+    def _write(key, value):
+        current = cfg
+        parts = key.split(".")
+        for part in parts[:-1]:
+            current = current.setdefault(part, {})
+        current[parts[-1]] = value
+
+    monkeypatch.setattr(server, "_load_cfg", lambda: cfg)
+    monkeypatch.setattr(server, "_write_config_key", _write)
+    monkeypatch.setattr(server, "_session_info", lambda _agent, _session: {"model": "openrouter/fusion"})
+    monkeypatch.setattr(server, "_emit", lambda *args: emitted.append(args))
+
+    session = _session(running=False)
+    session["agent"] = types.SimpleNamespace(model="openrouter/fusion")
+
+    output, warning = server._run_fusion_command_for_session("preset my-custom-slug", "sid", session)
+
+    assert warning == ""
+    assert "my-custom-slug" in output
+    assert cfg["openrouter"]["fusion"]["preset"] == "my-custom-slug"
+    assert session["agent"].openrouter_fusion_config["preset"] == "my-custom-slug"
+    assert ("session.info", "sid", {"model": "openrouter/fusion"}) in emitted
+
+
 # ---------------------------------------------------------------------------
 # session.create / session.close race: fast /new churn must not orphan the
 # slash_worker subprocess or the global approval-notify registration.

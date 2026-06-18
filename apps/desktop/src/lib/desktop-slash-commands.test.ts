@@ -40,15 +40,18 @@ describe('desktop slash command curation', () => {
     expect(isDesktopSlashSuggestion('/curator')).toBe(false)
   })
 
-  it('surfaces /tools, /save, and /personality on the desktop', () => {
+  it('surfaces /tools, /save, /fusion, and /personality on the desktop', () => {
     expect(isDesktopSlashSuggestion('/tools')).toBe(true)
     expect(isDesktopSlashSuggestion('/save')).toBe(true)
+    expect(isDesktopSlashSuggestion('/fusion')).toBe(true)
     expect(isDesktopSlashSuggestion('/personality')).toBe(true)
     expect(isDesktopSlashCommand('/tools')).toBe(true)
     expect(isDesktopSlashCommand('/save')).toBe(true)
+    expect(isDesktopSlashCommand('/fusion')).toBe(true)
     expect(isDesktopSlashCommand('/personality')).toBe(true)
     expect(desktopSlashUnavailableMessage('/tools')).toBeNull()
     expect(desktopSlashUnavailableMessage('/save')).toBeNull()
+    expect(desktopSlashUnavailableMessage('/fusion')).toBeNull()
     expect(desktopSlashUnavailableMessage('/personality')).toBeNull()
   })
 

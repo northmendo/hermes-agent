@@ -1265,10 +1265,22 @@ DEFAULT_CONFIG = {
     #   pick the strongest available coder (router's documented default
     #   when the plugins block is omitted).
     #   See: https://openrouter.ai/docs/guides/routing/routers/pareto-router
+    # show_fusion_model: keep the openrouter/fusion alias pinned in model pickers.
+    # fusion: request-level OpenRouter Fusion plugin config. The preset accepts
+    #   curated or user-defined Fusion preset slugs; explicit analysis_models
+    #   and model override the preset per OpenRouter's plugin docs.
     "openrouter": {
         "response_cache": True,
         "response_cache_ttl": 300,
         "min_coding_score": 0.65,
+        "show_fusion_model": True,
+        "fusion": {
+            "enabled": True,
+            "preset": "general-budget",
+            "analysis_models": [],
+            "model": "",
+            "max_tool_calls": "",
+        },
         # Model picker source:
         #   curated — Hermes curated manifest/fallback list (default, backward-compatible)
         #   all     — public OpenRouter /api/v1/models catalog

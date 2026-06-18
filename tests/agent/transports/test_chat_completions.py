@@ -236,6 +236,32 @@ class TestChatCompletionsBuildKwargs:
             {"id": "pareto-router", "min_coding_score": 0.8}
         ]
 
+    def test_openrouter_fusion_profile_path(self, transport):
+        from providers import get_provider_profile
+        profile = get_provider_profile("openrouter")
+        msgs = [{"role": "user", "content": "Hi"}]
+        kw = transport.build_kwargs(
+            model="openrouter/fusion",
+            messages=msgs,
+            provider_profile=profile,
+            openrouter_fusion_config={"preset": "general-budget"},
+        )
+        assert kw["extra_body"]["plugins"] == [
+            {"id": "fusion", "enabled": True, "preset": "general-budget"}
+        ]
+
+    def test_openrouter_fusion_legacy_path(self, transport):
+        msgs = [{"role": "user", "content": "Hi"}]
+        kw = transport.build_kwargs(
+            model="openrouter/fusion",
+            messages=msgs,
+            is_openrouter=True,
+            openrouter_fusion_config={"enabled": False, "preset": "general-high"},
+        )
+        assert kw["extra_body"]["plugins"] == [
+            {"id": "fusion", "enabled": False}
+        ]
+
     def test_nous_tags(self, transport):
         from agent.portal_tags import nous_portal_tags
         from providers import get_provider_profile

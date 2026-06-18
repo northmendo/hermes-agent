@@ -5,6 +5,10 @@ from typing import Any
 
 from providers import register_provider
 from providers.base import ProviderProfile
+from hermes_cli.openrouter_fusion import (
+    FUSION_MODEL_ID,
+    build_openrouter_fusion_plugin,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +103,10 @@ class OpenRouterProfile(ProviderProfile):
                     body["plugins"] = [
                         {"id": "pareto-router", "min_coding_score": score_f}
                     ]
+        elif model == FUSION_MODEL_ID:
+            body["plugins"] = [
+                build_openrouter_fusion_plugin(context.get("openrouter_fusion_config"))
+            ]
         return body
 
     def build_api_kwargs_extras(

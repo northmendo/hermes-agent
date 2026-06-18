@@ -2006,6 +2006,44 @@ class CLICommandsMixin:
         if self._apply_tui_skin_style():
             print("  Prompt + TUI colors updated.")
 
+    def _handle_fusion_command(self, cmd: str) -> None:
+        """Handle /fusion — inspect or update OpenRouter Fusion settings."""
+        from cli import save_config_value
+        from hermes_cli.openrouter_fusion import (
+            get_openrouter_fusion_settings,
+            handle_openrouter_fusion_command,
+        )
+
+        arg = ""
+        try:
+            parts = (cmd or "").strip().split(None, 1)
+            if len(parts) > 1:
+                arg = parts[1].strip()
+            output = handle_openrouter_fusion_command(
+                arg,
+                save_value=save_config_value,
+            )
+        except (RuntimeError, ValueError) as exc:
+            print(f"  /fusion: {exc}")
+            return
+
+        agent = getattr(self, "agent", None)
+        if agent is not None:
+            try:
+                agent.openrouter_fusion_config = get_openrouter_fusion_settings()
+            except Exception:
+                pass
+
+        if arg.strip().lower().replace("_", "-") in {"show", "hide"}:
+            try:
+                from hermes_cli.models import clear_provider_models_cache
+
+                clear_provider_models_cache("openrouter")
+            except Exception:
+                pass
+
+        print(output)
+
     def _handle_footer_command(self, cmd_original: str) -> None:
         """Toggle or inspect ``display.runtime_footer.enabled`` from the CLI.
 

@@ -1498,6 +1498,49 @@ Notes:
 - See OpenRouter's [Pareto Router docs](https://openrouter.ai/docs/guides/routing/routers/pareto-router) for the full router behavior.
 - To use the Pareto Code router for a specific **auxiliary task** (compression, vision, etc.) instead of the main agent, set `extra_body.plugins` under that task — see [Auxiliary Models → OpenRouter routing & Pareto Code for auxiliary tasks](/user-guide/configuration#openrouter-routing--pareto-code-for-auxiliary-tasks).
 
+## OpenRouter Fusion Router
+
+OpenRouter's `openrouter/fusion` alias runs a multi-model analysis panel and a judge model when the model decides Fusion is useful. Hermes keeps this alias visible in the OpenRouter picker by default and sends request-level Fusion plugin settings only when the selected model is `openrouter/fusion`.
+
+```yaml
+model:
+  provider: openrouter
+  model: openrouter/fusion
+
+openrouter:
+  show_fusion_model: true
+  fusion:
+    enabled: true
+    preset: general-budget      # Also accepts general-high or your own preset slug.
+    # analysis_models:          # Optional custom panel; 1-8 model IDs.
+    #   - "~anthropic/claude-opus-latest"
+    #   - "~openai/gpt-latest"
+    # model: "~openai/gpt-latest"  # Optional judge/final-answer model.
+    # max_tool_calls: 8
+```
+
+You can update the same settings from the app or CLI:
+
+```bash
+/fusion status
+/fusion preset general-high
+/fusion preset my-custom-slug
+/fusion models ~anthropic/claude-opus-latest ~openai/gpt-latest
+/fusion judge ~openai/gpt-latest
+/fusion max-tool-calls 8
+/fusion on
+/fusion off
+/fusion show
+/fusion hide
+```
+
+Notes:
+
+- `preset` passes through any non-empty slug so user-created Fusion presets work.
+- `analysis_models` and `model` override the preset, matching OpenRouter's Fusion plugin behavior.
+- Hermes does not force `tool_choice: "required"`; OpenRouter's model decides whether to invoke Fusion.
+- `show_fusion_model` controls picker visibility. `fusion.enabled` controls the request-level plugin's bypass flag.
+
 ## Fallback Providers
 
 Configure a chain of backup providers Hermes tries in order when the primary model fails (rate limits, server errors, auth failures). The canonical format is a top-level `fallback_providers:` list:

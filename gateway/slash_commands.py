@@ -1611,6 +1611,41 @@ class GatewaySlashCommandsMixin:
         available = "`none`, " + ", ".join(f"`{n}`" for n in personalities)
         return t("gateway.personality.unknown", name=args, available=available)
 
+    async def _handle_fusion_command(self, event: MessageEvent) -> str:
+        """Handle /fusion — inspect or update OpenRouter Fusion settings."""
+        from gateway.run import _hermes_home, _load_gateway_config
+        from hermes_cli.openrouter_fusion import handle_openrouter_fusion_command
+        from utils import atomic_yaml_write
+
+        config_path = _hermes_home / "config.yaml"
+        try:
+            config = _load_gateway_config() or {}
+        except Exception:
+            config = {}
+
+        def _save(key_path: str, value):
+            current = config
+            parts = key_path.split(".")
+            for part in parts[:-1]:
+                child = current.get(part)
+                if not isinstance(child, dict):
+                    child = {}
+                    current[part] = child
+                current = child
+            current[parts[-1]] = value
+            atomic_yaml_write(config_path, config)
+
+        try:
+            return handle_openrouter_fusion_command(
+                event.get_command_args().strip(),
+                save_value=_save,
+                config=config,
+            )
+        except ValueError as exc:
+            return str(exc)
+        except Exception as exc:
+            return f"/fusion failed: {exc}"
+
     async def _handle_retry_command(self, event: MessageEvent) -> str:
         """Handle /retry command - re-send the last user message."""
         source = event.source

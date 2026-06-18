@@ -402,6 +402,12 @@ class ChatCompletionsTransport(ProviderTransport):
                     extra_body["plugins"] = [
                         {"id": "pareto-router", "min_coding_score": _pareto_score_f}
                     ]
+        elif is_openrouter and model == "openrouter/fusion":
+            from hermes_cli.openrouter_fusion import build_openrouter_fusion_plugin
+
+            extra_body["plugins"] = [
+                build_openrouter_fusion_plugin(params.get("openrouter_fusion_config"))
+            ]
 
         # Kimi extra_body.thinking
         if is_kimi:
@@ -549,6 +555,7 @@ class ChatCompletionsTransport(ProviderTransport):
             base_url=params.get("base_url"),
             reasoning_config=reasoning_config,
             openrouter_min_coding_score=params.get("openrouter_min_coding_score"),
+            openrouter_fusion_config=params.get("openrouter_fusion_config"),
         )
         if profile_body:
             extra_body.update(profile_body)

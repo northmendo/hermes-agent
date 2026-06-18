@@ -7587,6 +7587,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         if canonical == "model":
             return await self._handle_model_command(event)
 
+        if canonical == "fusion":
+            return await self._handle_fusion_command(event)
+
         if canonical == "codex-runtime":
             return await self._handle_codex_runtime_command(event)
 
@@ -12753,6 +12756,8 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         ("compression", "protect_last_n"),
         ("agent", "disabled_toolsets"),
         ("memory", "provider"),
+        ("openrouter", "fusion"),
+        ("openrouter", "show_fusion_model"),
     )
 
     _HONCHO_CACHE_BUSTING_KEYS = (

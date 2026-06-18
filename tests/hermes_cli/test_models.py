@@ -74,7 +74,8 @@ class TestFetchOpenRouterModels:
             models = fetch_openrouter_models(force_refresh=True)
 
         assert models == [
-            ("anthropic/claude-opus-4.8", "recommended"),
+            ("anthropic/claude-opus-4.8", ""),
+            ("openrouter/fusion", "multi-model analysis with Fusion router"),
             ("qwen/qwen3.7-max", ""),
             ("nvidia/nemotron-3-super-120b-a12b:free", "free"),
         ]
@@ -84,7 +85,15 @@ class TestFetchOpenRouterModels:
         with patch("hermes_cli.models.urllib.request.urlopen", side_effect=OSError("boom")):
             models = fetch_openrouter_models(force_refresh=True)
 
-        assert models == OPENROUTER_MODELS
+        assert models == [
+            ("anthropic/claude-opus-4.8", ""),
+            ("openrouter/fusion", "multi-model analysis with Fusion router"),
+            *[
+                item
+                for item in OPENROUTER_MODELS
+                if item[0] not in {"anthropic/claude-opus-4.8", "openrouter/fusion"}
+            ],
+        ]
 
     def test_filters_out_models_without_tool_support(self, monkeypatch):
         """Models whose supported_parameters omits 'tools' must not appear in the picker.

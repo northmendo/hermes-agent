@@ -180,6 +180,7 @@ def init_agent(
     provider_require_parameters: bool = False,
     provider_data_collection: str = None,
     openrouter_min_coding_score: Optional[float] = None,
+    openrouter_fusion_config: Optional[Dict[str, Any]] = None,
     session_id: str = None,
     tool_progress_callback: callable = None,
     tool_start_callback: callable = None,
@@ -250,6 +251,8 @@ def init_agent(
         openrouter_min_coding_score (float): Coding-score floor (0.0-1.0) for the
             openrouter/pareto-code router. Only applied when model == "openrouter/pareto-code".
             None or empty = let OpenRouter pick the strongest available coder.
+        openrouter_fusion_config (dict): Normalized or raw ``openrouter.fusion``
+            config for the openrouter/fusion router.
         session_id (str): Pre-generated session ID for logging (optional, auto-generated if not provided)
         tool_progress_callback (callable): Callback function(tool_name, args_preview) for progress notifications
         clarify_callback (callable): Callback function(question, choices) -> str for interactive user questions.
@@ -477,6 +480,22 @@ def init_agent(
     agent.provider_require_parameters = provider_require_parameters
     agent.provider_data_collection = provider_data_collection
     agent.openrouter_min_coding_score = openrouter_min_coding_score
+    if openrouter_fusion_config is None:
+        try:
+            from hermes_cli.openrouter_fusion import get_openrouter_fusion_settings
+
+            agent.openrouter_fusion_config = get_openrouter_fusion_settings()
+        except Exception:
+            agent.openrouter_fusion_config = None
+    else:
+        try:
+            from hermes_cli.openrouter_fusion import normalize_openrouter_fusion_settings
+
+            agent.openrouter_fusion_config = normalize_openrouter_fusion_settings(
+                openrouter_fusion_config
+            )
+        except Exception:
+            agent.openrouter_fusion_config = openrouter_fusion_config
 
     # Store toolset filtering options
     agent.enabled_toolsets = enabled_toolsets

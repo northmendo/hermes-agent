@@ -189,6 +189,24 @@ def test_max_models_caps_openrouter_live_output(monkeypatch):
     assert result[0]["total_models"] == 20
 
 
+def test_openrouter_fusion_survives_picker_cap(monkeypatch):
+    live = [
+        ("anthropic/claude-opus-4.8", "recommended"),
+        ("openrouter/fusion", "multi-model analysis with Fusion router"),
+        ("moonshotai/kimi-k2.6", ""),
+    ]
+    base = [_make_provider("openrouter", models=["placeholder"])]
+
+    monkeypatch.setattr(model_switch, "list_authenticated_providers",
+                        lambda **kw: list(base))
+    monkeypatch.setattr("hermes_cli.models.fetch_openrouter_models",
+                        lambda *a, **kw: list(live))
+
+    result = model_switch.list_picker_providers(max_models=2)
+
+    assert result[0]["models"] == ["anthropic/claude-opus-4.8", "openrouter/fusion"]
+
+
 def test_passthrough_kwargs_to_base(monkeypatch):
     """All kwargs must be forwarded to ``list_authenticated_providers`` unchanged.
 

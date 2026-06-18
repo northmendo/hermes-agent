@@ -152,6 +152,46 @@ class TestOpenRouterProfile:
             )
             assert "plugins" not in body, f"bad={bad!r}"
 
+    def test_fusion_plugin_emitted_for_fusion_model(self):
+        p = get_provider_profile("openrouter")
+        body = p.build_extra_body(
+            model="openrouter/fusion",
+            openrouter_fusion_config={"preset": "my-custom-slug"},
+        )
+        assert body["plugins"] == [
+            {"id": "fusion", "enabled": True, "preset": "my-custom-slug"}
+        ]
+
+    def test_fusion_plugin_supports_custom_panel(self):
+        p = get_provider_profile("openrouter")
+        body = p.build_extra_body(
+            model="openrouter/fusion",
+            openrouter_fusion_config={
+                "preset": "general-budget",
+                "analysis_models": ["~anthropic/claude-opus-latest", "~openai/gpt-latest"],
+                "model": "~openai/gpt-latest",
+                "max_tool_calls": 8,
+            },
+        )
+        assert body["plugins"] == [
+            {
+                "id": "fusion",
+                "enabled": True,
+                "preset": "general-budget",
+                "analysis_models": ["~anthropic/claude-opus-latest", "~openai/gpt-latest"],
+                "model": "~openai/gpt-latest",
+                "max_tool_calls": 8,
+            }
+        ]
+
+    def test_fusion_plugin_ignored_for_other_models(self):
+        p = get_provider_profile("openrouter")
+        body = p.build_extra_body(
+            model="anthropic/claude-sonnet-4.6",
+            openrouter_fusion_config={"preset": "general-high"},
+        )
+        assert "plugins" not in body
+
     def test_reasoning_full_config(self):
         p = get_provider_profile("openrouter")
         eb, _ = p.build_api_kwargs_extras(

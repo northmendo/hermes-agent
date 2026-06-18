@@ -154,6 +154,13 @@ model:
 # openrouter:
 #   response_cache: true         # Enable response caching (default: true)
 #   response_cache_ttl: 300      # Cache TTL in seconds, 1-86400 (default: 300)
+#   show_fusion_model: true      # Keep openrouter/fusion visible in model pickers
+#   fusion:
+#     enabled: true              # Set false to bypass Fusion for openrouter/fusion requests
+#     preset: "general-budget"   # Preset slug; e.g. general-high, general-budget, or your own
+#     analysis_models: []        # Optional custom panel, 1-8 model IDs; overrides preset
+#     model: ""                  # Optional judge/final-answer model; overrides preset judge
+#     max_tool_calls: ""         # Optional 1-16 web_search/web_fetch steps per panel/judge
 
 # =============================================================================
 # Git Worktree Isolation

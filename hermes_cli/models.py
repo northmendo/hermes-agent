@@ -18,6 +18,11 @@ from pathlib import Path
 from typing import Any, NamedTuple, Optional
 
 from hermes_cli import __version__ as _HERMES_VERSION
+from hermes_cli.openrouter_fusion import (
+    FUSION_MODEL_DESCRIPTION,
+    FUSION_MODEL_ID,
+    apply_openrouter_fusion_model_visibility,
+)
 
 # Identify ourselves so endpoints fronted by Cloudflare's Browser Integrity
 # Check (error 1010) don't reject the default ``Python-urllib/*`` signature.
@@ -76,6 +81,7 @@ OPENROUTER_MODELS: list[tuple[str, str]] = [
     ("nvidia/nemotron-3-super-120b-a12b",      ""),
     # OpenRouter routers
     ("openrouter/pareto-code",                 "auto-routes to cheapest coder meeting openrouter.min_coding_score"),
+    (FUSION_MODEL_ID,                          FUSION_MODEL_DESCRIPTION),
     # Free tier
     ("openrouter/elephant-alpha",              "free"),
     ("openrouter/owl-alpha",                   "free"),
@@ -1464,7 +1470,7 @@ def fetch_openrouter_models(
     global _openrouter_catalog_cache
 
     if _openrouter_catalog_cache is not None and not force_refresh:
-        return list(_openrouter_catalog_cache)
+        return apply_openrouter_fusion_model_visibility(list(_openrouter_catalog_cache))
 
     source = get_openrouter_model_list_source()
     if source in {"all", "user"}:
@@ -1476,7 +1482,7 @@ def fetch_openrouter_models(
             live_models = []
         if live_models:
             _openrouter_catalog_cache = live_models
-            return list(live_models)
+            return apply_openrouter_fusion_model_visibility(list(live_models))
         # Fail soft: preserve current behavior if user source is unavailable.
         source = "curated"
 
@@ -1495,7 +1501,7 @@ def fetch_openrouter_models(
     try:
         live_items = fetch_openrouter_live_items("curated", timeout=timeout)
     except Exception:
-        return list(_openrouter_catalog_cache or fallback)
+        return apply_openrouter_fusion_model_visibility(list(_openrouter_catalog_cache or fallback))
 
     live_by_id: dict[str, dict[str, Any]] = {}
     for item in live_items:
@@ -1520,12 +1526,12 @@ def fetch_openrouter_models(
         curated.append((preferred_id, desc))
 
     if not curated:
-        return list(_openrouter_catalog_cache or fallback)
+        return apply_openrouter_fusion_model_visibility(list(_openrouter_catalog_cache or fallback))
 
     first_id, _ = curated[0]
     curated[0] = (first_id, "recommended")
     _openrouter_catalog_cache = curated
-    return list(curated)
+    return apply_openrouter_fusion_model_visibility(list(curated))
 
 
 def model_ids(*, force_refresh: bool = False) -> list[str]:
