@@ -97,6 +97,35 @@ def test_dashboard_builder_two_handlers():
     assert parser.parse_args(["dashboard", "register"]).func is reg
 
 
+def _update_parser():
+    parser = argparse.ArgumentParser(prog="hermes")
+    sub = parser.add_subparsers(dest="command")
+    build_update_parser(sub, cmd_update=_h("update"))
+    return parser
+
+
+def test_update_local_requires_path(capsys):
+    parser = _update_parser()
+
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(["update", "--local"])
+
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    assert "argument --local requires a PATH" in err
+    assert "Usage: hermes update --local <path>" in err
+    assert "Example: hermes update --local D:\\Hermes-Agent" in err
+
+
+def test_update_local_accepts_path_and_branch():
+    parser = _update_parser()
+
+    ns = parser.parse_args(["update", "--local", "D:\\Hermes-Agent", "--branch", "bb/gui"])
+
+    assert ns.local == "D:\\Hermes-Agent"
+    assert ns.branch == "bb/gui"
+
+
 # ── deprecated `hermes login` fails gracefully, not with argparse error ────
 #
 # `hermes login` is a removed command; its handler (`login_command` in

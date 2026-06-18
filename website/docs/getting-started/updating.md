@@ -59,6 +59,18 @@ hermes update --check --branch experimental   # preview behindness only
 
 If your local checkout is on a different branch, Hermes auto-stashes any uncommitted work, switches HEAD to the target branch, and then pulls. Branches that don't exist locally are auto-tracked from `origin/<name>` (`git checkout -B <name> origin/<name>`). Branches that don't exist anywhere fail cleanly — your stashed changes are restored before exit so you're never stranded in a weird state. The `main`-only fork-upstream sync logic is automatically skipped on non-`main` branches.
 
+### Updating from a local source checkout: `--local`
+
+For testing a committed local checkout without pushing to GitHub, pass the source path:
+
+```bash
+hermes update --local D:\Hermes-Agent
+hermes update --local D:\Hermes-Agent --branch feature/test
+hermes update --check --local D:\Hermes-Agent
+```
+
+Local updates fetch committed git history only. Uncommitted edits in the source checkout are ignored; commit them first if you want `hermes update --local <path>` to install them. Hermes uses a temporary fetched ref for the update and deletes it before exit, without adding a git remote, config entry, environment variable, or persistent tracking branch.
+
 ### Local changes on non-interactive updates
 
 When you run `hermes update` in a terminal, Hermes stashes any uncommitted source-tree changes, pulls, then **asks** whether to restore them — exactly as it always has. Nothing changes for interactive updates.

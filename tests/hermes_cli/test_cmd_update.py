@@ -806,6 +806,196 @@ class TestCmdUpdateCheckBranchFlag:
         assert "bb/gui" in out
 
 
+class TestCmdUpdateLocalSource:
+    def _local_source_side_effect(
+        self,
+        local_path,
+        *,
+        current_branch="main",
+        commit_count="2",
+        branch_exists=True,
+    ):
+        calls = []
+
+        def side_effect(cmd, **kwargs):
+            calls.append((cmd, kwargs.get("cwd")))
+            joined = " ".join(str(c) for c in cmd)
+            cwd = kwargs.get("cwd")
+
+            if cwd == local_path and "rev-parse --git-dir" in joined:
+                return subprocess.CompletedProcess(cmd, 0, stdout=".git\n", stderr="")
+
+            if cwd == local_path and "rev-parse --verify --quiet refs/heads/" in joined:
+                rc = 0 if branch_exists else 1
+                return subprocess.CompletedProcess(cmd, rc, stdout="", stderr="")
+
+            if "update-ref -d refs/hermes/update-local/" in joined:
+                return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+            if "fetch --no-tags" in joined and str(local_path) in joined:
+                return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+            if "rev-parse --verify --quiet refs/hermes/update-local/" in joined:
+                return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+            if "rev-parse --abbrev-ref HEAD" in joined:
+                return subprocess.CompletedProcess(cmd, 0, stdout=f"{current_branch}\n", stderr="")
+
+            if "rev-parse HEAD" in joined:
+                return subprocess.CompletedProcess(cmd, 0, stdout="abc123\n", stderr="")
+
+            if "rev-list HEAD..refs/hermes/update-local/" in joined:
+                return subprocess.CompletedProcess(cmd, 0, stdout=f"{commit_count}\n", stderr="")
+
+            if "merge --ff-only refs/hermes/update-local/" in joined:
+                return subprocess.CompletedProcess(cmd, 0, stdout="Updating\n", stderr="")
+
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        return side_effect, calls
+
+    @patch("hermes_cli.config.detect_install_method", return_value="git")
+    @patch("subprocess.run")
+    def test_check_local_compares_temp_ref_and_cleans_up(
+        self, mock_run, _mock_method, tmp_path, capsys
+    ):
+        local_path = (tmp_path / "source").resolve()
+        local_path.mkdir()
+        mock_run.side_effect, calls = self._local_source_side_effect(
+            local_path,
+            commit_count="2",
+        )
+        args = SimpleNamespace(check=True, branch="bb/gui", local=str(local_path))
+
+        cmd_update(args)
+
+        commands = [" ".join(str(a) for a in cmd) for cmd, _cwd in calls]
+        assert any("fetch --no-tags" in c and str(local_path) in c for c in commands)
+        assert any("refs/heads/bb/gui:refs/hermes/update-local/" in c for c in commands)
+        assert any("rev-list HEAD..refs/hermes/update-local/" in c for c in commands)
+        assert len([c for c in commands if "update-ref -d refs/hermes/update-local/" in c]) >= 2
+        assert not any("origin" in c for c in commands)
+
+        out = capsys.readouterr().out
+        assert "Local updates use committed git history only" in out
+        assert "uncommitted edits" in out
+        assert f"hermes update --local {local_path} --branch bb/gui" in out
+
+    def test_apply_local_uses_temp_ref_and_never_origin(self, monkeypatch, tmp_path):
+        from hermes_cli import main as hm
+
+        install_root = tmp_path / "install"
+        install_root.mkdir()
+        (install_root / ".git").mkdir()
+        local_path = (tmp_path / "source").resolve()
+        local_path.mkdir()
+
+        class StopAfterMerge(Exception):
+            pass
+
+        side_effect, calls = self._local_source_side_effect(local_path, commit_count="1")
+        monkeypatch.setattr(hm, "PROJECT_ROOT", install_root)
+        monkeypatch.setattr(hm, "_is_windows", lambda: False)
+        monkeypatch.setattr(hm, "_run_pre_update_backup", lambda _args: None)
+        monkeypatch.setattr(hm, "_pause_windows_gateways_for_update", lambda: None)
+        monkeypatch.setattr(hm, "_stash_local_changes_if_needed", lambda *a, **kw: None)
+        monkeypatch.setattr(hm, "_validate_critical_files_syntax", lambda _root: (_ for _ in ()).throw(StopAfterMerge()))
+        monkeypatch.setattr(hm.subprocess, "run", side_effect)
+        monkeypatch.setattr("hermes_cli.config.detect_install_method", lambda _root: "git")
+
+        with pytest.raises(StopAfterMerge):
+            hm._cmd_update_impl(
+                SimpleNamespace(local=str(local_path), branch=None, yes=True, force=True),
+                gateway_mode=False,
+            )
+
+        commands = [" ".join(str(a) for a in cmd) for cmd, _cwd in calls]
+        assert any("fetch --no-tags" in c and str(local_path) in c for c in commands)
+        assert any("merge --ff-only refs/hermes/update-local/" in c for c in commands)
+        assert len([c for c in commands if "update-ref -d refs/hermes/update-local/" in c]) >= 2
+        assert not any("origin" in c for c in commands)
+
+    @patch("hermes_cli.config.detect_install_method", return_value="git")
+    def test_local_missing_path_exits_with_usage(self, _mock_method, capsys):
+        with pytest.raises(SystemExit) as exc_info:
+            cmd_update(SimpleNamespace(check=True, local="", branch=None))
+
+        assert exc_info.value.code == 2
+        out = capsys.readouterr().out
+        assert "Missing local update source path" in out
+        assert "usage: hermes update --local <path>" in out
+        assert "Example: hermes update --local D:\\Hermes-Agent" in out
+
+    @patch("hermes_cli.config.detect_install_method", return_value="git")
+    def test_local_missing_source_path_exits_cleanly(self, _mock_method, tmp_path, capsys):
+        missing = tmp_path / "missing"
+
+        with pytest.raises(SystemExit) as exc_info:
+            cmd_update(SimpleNamespace(check=True, local=str(missing), branch=None))
+
+        assert exc_info.value.code == 1
+        out = capsys.readouterr().out
+        assert "Local update source not found" in out
+        assert str(missing) in out
+        assert "usage: hermes update --local <path>" in out
+
+    @patch("hermes_cli.config.detect_install_method", return_value="git")
+    @patch("subprocess.run")
+    def test_local_non_git_path_exits_cleanly(
+        self, mock_run, _mock_method, tmp_path, capsys
+    ):
+        local_path = (tmp_path / "not-git").resolve()
+        local_path.mkdir()
+        mock_run.return_value = subprocess.CompletedProcess(
+            ["git"], 128, stdout="", stderr="fatal: not a git repository\n"
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            cmd_update(SimpleNamespace(check=True, local=str(local_path), branch=None))
+
+        assert exc_info.value.code == 1
+        out = capsys.readouterr().out
+        assert "Local update source is not a git checkout" in out
+        assert str(local_path) in out
+        assert "usage: hermes update --local <path>" in out
+
+    @patch("hermes_cli.config.detect_install_method", return_value="git")
+    @patch("subprocess.run")
+    def test_local_missing_branch_exits_cleanly(
+        self, mock_run, _mock_method, tmp_path, capsys
+    ):
+        local_path = (tmp_path / "source").resolve()
+        local_path.mkdir()
+        mock_run.side_effect, _calls = self._local_source_side_effect(
+            local_path,
+            branch_exists=False,
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            cmd_update(SimpleNamespace(check=True, local=str(local_path), branch="ghost"))
+
+        assert exc_info.value.code == 1
+        out = capsys.readouterr().out
+        assert "Branch 'ghost' not found in local source" in out
+        assert str(local_path) in out
+
+    @pytest.mark.parametrize("method", ["pip", "docker"])
+    @patch("hermes_cli.config.detect_install_method")
+    def test_local_rejects_non_git_installs(
+        self, mock_method, method, tmp_path, capsys
+    ):
+        local_path = tmp_path / "source"
+        local_path.mkdir()
+        mock_method.return_value = method
+
+        with pytest.raises(SystemExit) as exc_info:
+            cmd_update(SimpleNamespace(check=True, local=str(local_path), branch=None))
+
+        assert exc_info.value.code == 1
+        out = capsys.readouterr().out
+        assert "--local is only supported for git installs" in out
+
+
 class TestCmdUpdateZipBranchRefusal:
     """``hermes update --branch=<non-main>`` must refuse on the ZIP fallback path.
 

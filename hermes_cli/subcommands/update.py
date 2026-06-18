@@ -6,7 +6,19 @@ Handler injected to avoid importing ``main``.
 
 from __future__ import annotations
 
+import argparse
 from typing import Callable
+
+
+class _LocalUpdateAction(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        if values is None or not str(values).strip():
+            parser.error(
+                "argument --local requires a PATH\n"
+                "  Usage: hermes update --local <path>\n"
+                "  Example: hermes update --local D:\\Hermes-Agent"
+            )
+        setattr(namespace, self.dest, values)
 
 
 def build_update_parser(subparsers, *, cmd_update: Callable) -> None:
@@ -59,6 +71,17 @@ def build_update_parser(subparsers, *, cmd_update: Callable) -> None:
             "If the local checkout is on a different branch, hermes will "
             "switch to the requested branch first (auto-stashing any "
             "uncommitted changes)."
+        ),
+    )
+    update_parser.add_argument(
+        "--local",
+        nargs="?",
+        action=_LocalUpdateAction,
+        default=None,
+        metavar="PATH",
+        help=(
+            "Update from committed git history in a local Hermes checkout. "
+            "Usage: hermes update --local <path>"
         ),
     )
     update_parser.add_argument(

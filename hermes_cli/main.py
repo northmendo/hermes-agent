@@ -5919,6 +5919,9 @@ def _update_via_zip(args):
     Used on Windows when git file I/O is broken (antivirus, NTFS filter
     drivers causing 'Invalid argument' errors on file creation).
     """
+    if _is_local_update(args):
+        _reject_local_update_for_non_git_install()
+
     import tempfile
     import zipfile
     from urllib.request import urlretrieve
@@ -7628,7 +7631,209 @@ def _resolve_update_branch(args) -> str:
     return (getattr(args, "branch", None) or "main").strip() or "main"
 
 
-def _cmd_update_check(branch: str = "main", *, branch_explicit: bool = False):
+class _UpdateSource:
+    def __init__(
+        self,
+        *,
+        branch: str,
+        local_path: Optional[Path] = None,
+        temp_ref: Optional[str] = None,
+    ):
+        self.branch = branch
+        self.local_path = local_path
+        self.temp_ref = temp_ref
+
+    @property
+    def is_local(self) -> bool:
+        return self.local_path is not None
+
+    @property
+    def compare_ref(self) -> str:
+        if self.temp_ref:
+            return self.temp_ref
+        return f"origin/{self.branch}"
+
+    def fetch_command(self, git_cmd: list[str]) -> list[str]:
+        if self.local_path is not None and self.temp_ref is not None:
+            return git_cmd + [
+                "fetch",
+                "--no-tags",
+                str(self.local_path),
+                f"refs/heads/{self.branch}:{self.temp_ref}",
+            ]
+        return git_cmd + ["fetch", "origin", self.branch]
+
+    def update_command(self, git_cmd: list[str]) -> list[str]:
+        if self.is_local:
+            return git_cmd + ["merge", "--ff-only", self.compare_ref]
+        return git_cmd + ["pull", "--ff-only", "origin", self.branch]
+
+    def track_command(self, git_cmd: list[str]) -> list[str]:
+        return git_cmd + ["checkout", "-B", self.branch, self.compare_ref]
+
+    def reset_command(self, git_cmd: list[str]) -> list[str]:
+        return git_cmd + ["reset", "--hard", self.compare_ref]
+
+    def manual_reset_hint(self) -> str:
+        if self.local_path is not None:
+            manual_ref = "refs/hermes/update-local/manual"
+            return (
+                f"git fetch --no-tags {self.local_path} "
+                f"refs/heads/{self.branch}:{manual_ref} && "
+                f"git reset --hard {manual_ref}"
+            )
+        return f"git fetch origin && git reset --hard origin/{self.branch}"
+
+
+def _is_local_update(args) -> bool:
+    return getattr(args, "local", None) is not None
+
+
+def _print_local_update_usage() -> None:
+    print("usage: hermes update --local <path>")
+    print("Example: hermes update --local D:\\Hermes-Agent")
+
+
+def _require_local_update_path(args) -> Optional[str]:
+    if not _is_local_update(args):
+        return None
+    raw = str(getattr(args, "local", "") or "").strip()
+    if raw:
+        return raw
+    print("✗ Missing local update source path.")
+    _print_local_update_usage()
+    sys.exit(2)
+
+
+def _reject_local_update_for_non_git_install() -> None:
+    print("✗ --local is only supported for git installs.")
+    print("  Use: hermes update --local <path>")
+    sys.exit(1)
+
+
+def _format_update_apply_command(source: _UpdateSource) -> str:
+    if not source.is_local:
+        from hermes_cli.config import recommended_update_command
+
+        return recommended_update_command()
+
+    local_arg = str(source.local_path)
+    if any(ch.isspace() for ch in local_arg):
+        local_arg = f'"{local_arg}"'
+    command = f"hermes update --local {local_arg}"
+    if source.branch != "main":
+        command += f" --branch {source.branch}"
+    return command
+
+
+def _build_update_source(args, git_cmd: list[str], branch: str) -> _UpdateSource:
+    local_raw = _require_local_update_path(args)
+    if local_raw is None:
+        return _UpdateSource(branch=branch)
+
+    local_path = Path(local_raw).expanduser().resolve()
+    if not local_path.exists():
+        print(f"✗ Local update source not found: {local_path}")
+        _print_local_update_usage()
+        sys.exit(1)
+    if not local_path.is_dir():
+        print(f"✗ Local update source is not a git checkout: {local_path}")
+        _print_local_update_usage()
+        sys.exit(1)
+
+    git_probe = subprocess.run(
+        git_cmd + ["rev-parse", "--git-dir"],
+        cwd=local_path,
+        capture_output=True,
+        text=True,
+    )
+    if git_probe.returncode != 0:
+        print(f"✗ Local update source is not a git checkout: {local_path}")
+        _print_local_update_usage()
+        sys.exit(1)
+
+    branch_probe = subprocess.run(
+        git_cmd + ["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"],
+        cwd=local_path,
+        capture_output=True,
+        text=True,
+    )
+    if branch_probe.returncode != 0:
+        print(f"✗ Branch '{branch}' not found in local source: {local_path}")
+        print(
+            "  Commit or checkout the branch in that repo, then run: "
+            f"hermes update --local {local_path} --branch {branch}"
+        )
+        sys.exit(1)
+
+    return _UpdateSource(
+        branch=branch,
+        local_path=local_path,
+        temp_ref=f"refs/hermes/update-local/{os.getpid()}",
+    )
+
+
+def _cleanup_update_source(source: Optional[_UpdateSource], git_cmd: list[str]) -> None:
+    if source is None or not source.temp_ref:
+        return
+    try:
+        subprocess.run(
+            git_cmd + ["update-ref", "-d", source.temp_ref],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except Exception:
+        pass
+
+
+def _fetch_update_source(source: _UpdateSource, git_cmd: list[str]) -> None:
+    if source.is_local:
+        print(f"→ Fetching updates from local source: {source.local_path}")
+        print(
+            f"  Local updates use committed git history only; "
+            f"uncommitted edits in {source.local_path} are ignored."
+        )
+        _cleanup_update_source(source, git_cmd)
+    else:
+        print("→ Fetching updates...")
+
+    fetch_result = subprocess.run(
+        source.fetch_command(git_cmd),
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    if fetch_result.returncode == 0:
+        return
+
+    stderr = fetch_result.stderr.strip()
+    if source.is_local:
+        print(
+            f"✗ Failed to fetch branch '{source.branch}' from local source: "
+            f"{source.local_path}"
+        )
+        if stderr:
+            print(f"  {stderr.splitlines()[0]}")
+    elif "Could not resolve host" in stderr or "unable to access" in stderr:
+        print("✗ Network error — cannot reach the remote repository.")
+        print(f"  {stderr.splitlines()[0]}" if stderr else "")
+    elif "Authentication failed" in stderr or "could not read Username" in stderr:
+        print("✗ Authentication failed — check your git credentials or SSH key.")
+    else:
+        print("✗ Failed to fetch updates from origin.")
+        if stderr:
+            print(f"  {stderr.splitlines()[0]}")
+    sys.exit(1)
+
+
+def _cmd_update_check(
+    branch: str = "main",
+    *,
+    branch_explicit: bool = False,
+    local: Optional[str] = None,
+):
     """Implement ``hermes update --check``: fetch and report without installing.
 
     ``branch`` selects which branch the check compares against. Default is
@@ -7641,7 +7846,10 @@ def _cmd_update_check(branch: str = "main", *, branch_explicit: bool = False):
     dropping the flag.
     """
     from hermes_cli.config import detect_install_method
+    args = type("_UpdateCheckArgs", (), {"branch": branch, "local": local})()
     method = detect_install_method(PROJECT_ROOT)
+    if local is not None and method in {"docker", "pip"}:
+        _reject_local_update_for_non_git_install()
     if method == "docker":
         # Docker can't ``git fetch`` from within the container.  Surface the
         # same long-form ``docker pull`` guidance ``hermes update`` (apply
@@ -7668,6 +7876,8 @@ def _cmd_update_check(branch: str = "main", *, branch_explicit: bool = False):
 
     git_dir = PROJECT_ROOT / ".git"
     if not git_dir.exists():
+        if local is not None:
+            _reject_local_update_for_non_git_install()
         print("✗ Not a git repository — cannot check for updates.")
         sys.exit(1)
 
@@ -7675,61 +7885,49 @@ def _cmd_update_check(branch: str = "main", *, branch_explicit: bool = False):
     if sys.platform == "win32":
         git_cmd = ["git", "-c", "windows.appendAtomically=false"]
 
-    # Fetch only the branch we compare against. A bare `git fetch <remote>`
-    # pulls every ref, and this repo has thousands of auto-generated branches,
-    # so scope the fetch to <branch>.
-    print("→ Fetching from origin...")
-    fetch_result = subprocess.run(
-        git_cmd + ["fetch", "origin", branch],
-        cwd=PROJECT_ROOT,
-        capture_output=True,
-        text=True,
-    )
-    compare_branch = f"origin/{branch}"
+    source = None
+    try:
+        source = _build_update_source(args, git_cmd, branch)
+        # Fetch only the branch we compare against. A bare `git fetch <remote>`
+        # pulls every ref, and this repo has thousands of auto-generated branches,
+        # so scope the fetch to <branch>.
+        _fetch_update_source(source, git_cmd)
+        compare_branch = source.compare_ref
 
-    if fetch_result.returncode != 0:
-        stderr = fetch_result.stderr.strip()
-        if "Could not resolve host" in stderr or "unable to access" in stderr:
-            print("✗ Network error — cannot reach the remote repository.")
-        elif "Authentication failed" in stderr or "could not read Username" in stderr:
-            print("✗ Authentication failed — check your git credentials or SSH key.")
+        # Verify the compare ref actually exists before asking rev-list about it.
+        # Without this, `git rev-list HEAD..origin/<bogus> --count` exits 128 and
+        # (with check=True) raises CalledProcessError, surfacing a Python
+        # traceback. Friendlier to detect-and-report.
+        verify_result = subprocess.run(
+            git_cmd + ["rev-parse", "--verify", "--quiet", compare_branch],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+        )
+        if verify_result.returncode != 0:
+            if source.is_local:
+                print(f"✗ Branch '{branch}' not found in local source: {source.local_path}")
+            else:
+                print(f"✗ Branch '{branch}' not found on {compare_branch.split('/', 1)[0]}.")
+            sys.exit(1)
+
+        rev_result = subprocess.run(
+            git_cmd + ["rev-list", f"HEAD..{compare_branch}", "--count"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        behind = int(rev_result.stdout.strip())
+
+        if behind == 0:
+            print("✓ Already up to date.")
         else:
-            print("✗ Failed to fetch.")
-            if stderr:
-                print(f"  {stderr.splitlines()[0]}")
-        sys.exit(1)
-
-    # Verify the compare ref actually exists before asking rev-list about it.
-    # Without this, `git rev-list HEAD..origin/<bogus> --count` exits 128 and
-    # (with check=True) raises CalledProcessError, surfacing a Python
-    # traceback. Friendlier to detect-and-report.
-    verify_result = subprocess.run(
-        git_cmd + ["rev-parse", "--verify", "--quiet", compare_branch],
-        cwd=PROJECT_ROOT,
-        capture_output=True,
-        text=True,
-    )
-    if verify_result.returncode != 0:
-        print(f"✗ Branch '{branch}' not found on {compare_branch.split('/', 1)[0]}.")
-        sys.exit(1)
-
-    rev_result = subprocess.run(
-        git_cmd + ["rev-list", f"HEAD..{compare_branch}", "--count"],
-        cwd=PROJECT_ROOT,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    behind = int(rev_result.stdout.strip())
-
-    if behind == 0:
-        print("✓ Already up to date.")
-    else:
-        commits_word = "commit" if behind == 1 else "commits"
-        print(f"⚕ Update available: {behind} {commits_word} behind {compare_branch}.")
-        from hermes_cli.config import recommended_update_command
-
-        print(f"  Run '{recommended_update_command()}' to install.")
+            commits_word = "commit" if behind == 1 else "commits"
+            print(f"⚕ Update available: {behind} {commits_word} behind {compare_branch}.")
+            print(f"  Run '{_format_update_apply_command(source)}' to install.")
+    finally:
+        _cleanup_update_source(source, git_cmd)
 
 
 def _ensure_fhs_path_guard() -> None:
@@ -8150,9 +8348,15 @@ def cmd_update(args):
         managed_error,
     )
 
+    _require_local_update_path(args)
+
     if is_managed():
         managed_error("update Hermes Agent")
         return
+
+    method = detect_install_method(PROJECT_ROOT)
+    if _is_local_update(args) and method in {"docker", "pip"}:
+        _reject_local_update_for_non_git_install()
 
     # Docker users can't ``git pull`` — the image excludes ``.git`` from
     # the build context.  Bail with a friendly explanation pointing at
@@ -8160,7 +8364,7 @@ def cmd_update(args):
     # below get a chance to error out with misleading "Not a git
     # repository" text.  See format_docker_update_message() for the full
     # rationale and tag-pinning / config-persistence notes.
-    if detect_install_method(PROJECT_ROOT) == "docker":
+    if method == "docker":
         print(format_docker_update_message())
         sys.exit(1)
 
@@ -8171,6 +8375,7 @@ def cmd_update(args):
         _cmd_update_check(
             branch=branch,
             branch_explicit=bool(getattr(args, "branch", None)),
+            local=getattr(args, "local", None),
         )
         return
 
@@ -8394,11 +8599,15 @@ def _cmd_update_impl(args, gateway_mode: bool):
     # user no longer wants.
     from hermes_cli.config import detect_install_method
     method = detect_install_method(PROJECT_ROOT)
+    if _is_local_update(args) and method == "pip":
+        _reject_local_update_for_non_git_install()
     if method == "pip":
         _cmd_update_pip(args)
         return
 
     if not git_dir.exists():
+        if _is_local_update(args):
+            _reject_local_update_for_non_git_install()
         if sys.platform == "win32":
             use_zip_update = True
         else:
@@ -8448,6 +8657,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
         return
 
     # Fetch and pull
+    source = None
     try:
 
         # Resolve the target branch up front so the fetch can be scoped to it.
@@ -8456,30 +8666,8 @@ def _cmd_update_impl(args, gateway_mode: bool):
         # minutes on a non-single-branch checkout. Fetch only what we update
         # against.
         branch = _resolve_update_branch(args)
-
-        print("→ Fetching updates...")
-        fetch_result = subprocess.run(
-            git_cmd + ["fetch", "origin", branch],
-            cwd=PROJECT_ROOT,
-            capture_output=True,
-            text=True,
-        )
-        if fetch_result.returncode != 0:
-            stderr = fetch_result.stderr.strip()
-            if "Could not resolve host" in stderr or "unable to access" in stderr:
-                print("✗ Network error — cannot reach the remote repository.")
-                print(f"  {stderr.splitlines()[0]}" if stderr else "")
-            elif (
-                "Authentication failed" in stderr or "could not read Username" in stderr
-            ):
-                print(
-                    "✗ Authentication failed — check your git credentials or SSH key."
-                )
-            else:
-                print(f"✗ Failed to fetch updates from origin.")
-                if stderr:
-                    print(f"  {stderr.splitlines()[0]}")
-            sys.exit(1)
+        source = _build_update_source(args, git_cmd, branch)
+        _fetch_update_source(source, git_cmd)
 
         # Get current branch (returns literal "HEAD" when detached)
         result = subprocess.run(
@@ -8512,12 +8700,11 @@ def _cmd_update_impl(args, gateway_mode: bool):
                 text=True,
             )
             if checkout_result.returncode != 0:
-                # Local checkout doesn't have this branch yet. Try to set
-                # it up as a tracking branch of origin/<branch>. This is
-                # the common case when the requested branch exists on origin
-                # but was never checked out locally.
+                # Local checkout doesn't have this branch yet. Create it from
+                # the fetched source ref without adding a persistent remote or
+                # tracking configuration.
                 track_result = subprocess.run(
-                    git_cmd + ["checkout", "-B", branch, f"origin/{branch}"],
+                    source.track_command(git_cmd),
                     cwd=PROJECT_ROOT,
                     capture_output=True,
                     text=True,
@@ -8533,7 +8720,13 @@ def _cmd_update_impl(args, gateway_mode: bool):
                             prompt_user=False,
                             input_fn=gw_input_fn,
                         )
-                    print(f"✗ Branch '{branch}' does not exist locally or on origin.")
+                    if source.is_local:
+                        print(
+                            f"✗ Could not create branch '{branch}' from local source: "
+                            f"{source.local_path}"
+                        )
+                    else:
+                        print(f"✗ Branch '{branch}' does not exist locally or on origin.")
                     if track_result.stderr.strip():
                         print(f"  {track_result.stderr.strip().splitlines()[0]}")
                     sys.exit(1)
@@ -8548,7 +8741,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
 
         # Check if there are updates
         result = subprocess.run(
-            git_cmd + ["rev-list", f"HEAD..origin/{branch}", "--count"],
+            git_cmd + ["rev-list", f"HEAD..{source.compare_ref}", "--count"],
             cwd=PROJECT_ROOT,
             capture_output=True,
             text=True,
@@ -8609,31 +8802,30 @@ def _cmd_update_impl(args, gateway_mode: bool):
         pre_pull_sha = _capture_head_sha(git_cmd, PROJECT_ROOT)
         try:
             pull_result = subprocess.run(
-                git_cmd + ["pull", "--ff-only", "origin", branch],
+                source.update_command(git_cmd),
                 cwd=PROJECT_ROOT,
                 capture_output=True,
                 text=True,
             )
             if pull_result.returncode != 0:
-                # ff-only failed — local and remote have diverged (e.g. upstream
-                # force-pushed or rebase).  Since local changes are already
-                # stashed, reset to match the remote exactly.
+                # ff-only failed — local and update source have diverged (e.g.
+                # upstream force-pushed/rebased, or a local test branch was
+                # rewritten). Since local changes are already stashed, reset to
+                # match the source exactly.
                 print(
-                    "  ⚠ Fast-forward not possible (history diverged), resetting to match remote..."
+                    "  ⚠ Fast-forward not possible (history diverged), resetting to match update source..."
                 )
                 reset_result = subprocess.run(
-                    git_cmd + ["reset", "--hard", f"origin/{branch}"],
+                    source.reset_command(git_cmd),
                     cwd=PROJECT_ROOT,
                     capture_output=True,
                     text=True,
                 )
                 if reset_result.returncode != 0:
-                    print(f"✗ Failed to reset to origin/{branch}.")
+                    print(f"✗ Failed to reset to {source.compare_ref}.")
                     if reset_result.stderr.strip():
                         print(f"  {reset_result.stderr.strip()}")
-                    print(
-                        f"  Try manually: git fetch origin && git reset --hard origin/{branch}"
-                    )
+                    print(f"  Try manually: {source.manual_reset_hint()}")
                     sys.exit(1)
 
             # Post-pull syntax guard: validate critical-path files actually
@@ -9821,6 +10013,8 @@ def _cmd_update_impl(args, gateway_mode: bool):
         else:
             print(f"✗ Update failed: {e}")
             sys.exit(1)
+    finally:
+        _cleanup_update_source(source, git_cmd)
 
 
 def _coalesce_session_name_args(argv: list) -> list:
