@@ -147,7 +147,15 @@ def resolve_openrouter_api_key_for_models_user() -> str:
 
 
 def save_openrouter_model_list_source(source: str) -> None:
-    """Persist the OpenRouter model-list source to config."""
+    """Persist the OpenRouter model-list source to config.
+
+    Invalidates the in-process OpenRouter catalog cache so a later
+    ``fetch_openrouter_models(force_refresh=False)`` re-reads the newly
+    selected source instead of serving the previously cached list. Without
+    this, long-running processes (gateway/TUI) keep showing the old source's
+    models until a restart or explicit force-refresh.
+    """
+    global _openrouter_catalog_cache
     from hermes_cli.config import load_config, save_config
     normalized = str(source or "curated").strip().lower()
     if normalized not in _OPENROUTER_MODEL_LIST_SOURCES:
@@ -159,6 +167,7 @@ def save_openrouter_model_list_source(source: str) -> None:
     block["model_list_source"] = normalized
     cfg["openrouter"] = block
     save_config(cfg)
+    _openrouter_catalog_cache = None
 
 
 def fetch_openrouter_live_items(

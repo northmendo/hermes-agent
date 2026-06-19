@@ -124,3 +124,24 @@ def test_save_openrouter_model_list_source_updates_config(monkeypatch, tmp_path)
     models.save_openrouter_model_list_source("user")
 
     assert saved["openrouter"]["model_list_source"] == "user"
+
+
+def test_save_openrouter_model_list_source_clears_cache(monkeypatch):
+    """Saving a new source must invalidate the in-process catalog cache.
+
+    Regression: fetch_openrouter_models(force_refresh=False) returns the
+    module-global cache before reading the configured source, so a stale
+    cache served the old source's models after a source change in a
+    long-running process.
+    """
+    from hermes_cli import config, models
+
+    monkeypatch.setattr(config, "load_config", lambda: {})
+    monkeypatch.setattr(config, "save_config", lambda cfg: None)
+
+    # Populate the cache as if a prior fetch under the old source happened.
+    models._openrouter_catalog_cache = [("old/model", "")]
+
+    models.save_openrouter_model_list_source("user")
+
+    assert models._openrouter_catalog_cache is None
