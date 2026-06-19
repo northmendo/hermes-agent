@@ -70,6 +70,19 @@ def _patch_managed_uv(request):
         yield
 
 
+@pytest.fixture(autouse=True)
+def _skip_pre_update_backup(monkeypatch):
+    """Prevent _run_pre_update_backup from walking real $HERMES_HOME.
+
+    The branch-flag and check-branch tests call cmd_update() with
+    SimpleNamespace args that lack no_backup. When the user's real config
+    has updates.pre_update_backup: true, the backup walks the real profile
+    directory calling Path.resolve() on every file, which hangs on Windows
+    symlinks/junctions. Mock it to a no-op so tests stay fast and isolated.
+    """
+    monkeypatch.setattr("hermes_cli.main._run_pre_update_backup", lambda args: None)
+
+
 class TestCmdUpdatePip:
     """Regression tests for pip-install update flows."""
 
