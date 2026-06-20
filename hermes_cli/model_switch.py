@@ -1414,6 +1414,7 @@ def list_authenticated_providers(
     max_models: int | None = None,
     current_model: str = "",
     refresh: bool = False,
+    live_discovery: bool = True,
 ) -> List[dict]:
     """Detect which providers have credentials and list their curated models.
 
@@ -1440,6 +1441,11 @@ def list_authenticated_providers(
     live catalog. Use for an explicit user-triggered "refresh models" action
     (e.g. the desktop picker's refresh control); leave false for normal picker
     opens so they stay snappy on the 1h cache.
+
+    ``live_discovery`` controls whether network-backed model probes are
+    allowed while building the picker inventory. Normal latency-sensitive
+    picker opens set this false and rely on configured/static/cached lists;
+    explicit refresh paths set it true.
     """
     import os
     from agent.models_dev import (
@@ -1453,6 +1459,9 @@ def list_authenticated_providers(
         _MODELS_DEV_PREFERRED, _merge_with_models_dev, cached_provider_model_ids,
         clear_provider_models_cache, get_curated_nous_model_ids,
     )
+
+    # Explicit refresh means the caller asked for live data.
+    live_discovery = bool(live_discovery or refresh)
 
     # Explicit refresh: drop every provider's cached model-id list so the
     # cached_provider_model_ids() calls below all re-fetch live. Without this
@@ -1552,7 +1561,7 @@ def list_authenticated_providers(
     # _PROVIDER_MODELS["nous"] snapshot when the manifest is unreachable.
     curated["nous"] = get_curated_nous_model_ids()
     # Ollama Cloud uses dynamic discovery (no static curated list)
-    if "ollama-cloud" not in curated:
+    if live_discovery and "ollama-cloud" not in curated:
         from hermes_cli.models import fetch_ollama_cloud_models
         curated["ollama-cloud"] = fetch_ollama_cloud_models()
     # LM Studio has no static catalog — probe its native /api/v1/models
@@ -1561,7 +1570,7 @@ def list_authenticated_providers(
     # (when current provider is lmstudio) > 127.0.0.1 default.
     # On auth rejection or unreachable server, fall back to the caller-supplied
     # current model so the picker still shows something when offline / mis-keyed.
-    if "lmstudio" not in curated and (
+    if live_discovery and "lmstudio" not in curated and (
         os.environ.get("LM_API_KEY") or os.environ.get("LM_BASE_URL") or current_provider.strip().lower() == "lmstudio"
     ):
         from hermes_cli.models import fetch_lmstudio_models
@@ -1644,7 +1653,11 @@ def list_authenticated_providers(
         # /model picker sees the SAME list `hermes model` would build, with
         # disk caching to keep the picker open snappy. Falls back to the
         # curated static list when the live fetcher returns nothing.
-        model_ids = cached_provider_model_ids(hermes_id)
+        model_ids = cached_provider_model_ids(
+            hermes_id,
+            force_refresh=refresh,
+            live_discovery=live_discovery,
+        )
         if not model_ids:
             model_ids = curated.get(hermes_id, [])
             if hermes_id in _MODELS_DEV_PREFERRED:
@@ -1757,12 +1770,20 @@ def list_authenticated_providers(
             # catalog. ``cached_provider_model_ids()`` falls back to the
             # curated list when the live endpoint is unreachable, so this
             # is safe for unauthenticated and offline cases too.
-            model_ids = cached_provider_model_ids(hermes_slug)
+            model_ids = cached_provider_model_ids(
+                hermes_slug,
+                force_refresh=refresh,
+                live_discovery=live_discovery,
+            )
         # For aws_sdk providers (bedrock), use live discovery so the list
         # reflects the active region (eu.*, ap.*) not the static us.* list.
         elif overlay.auth_type == "aws_sdk":
             try:
-                _ids = cached_provider_model_ids(hermes_slug)
+                _ids = cached_provider_model_ids(
+                    hermes_slug,
+                    force_refresh=refresh,
+                    live_discovery=live_discovery,
+                )
                 model_ids = _ids if _ids else (curated.get(hermes_slug, []) or curated.get(pid, []))
             except Exception:
                 model_ids = curated.get(hermes_slug, []) or curated.get(pid, [])
@@ -1807,7 +1828,11 @@ def list_authenticated_providers(
             # Unified pathway — see Section 1 rationale. Fall back to the
             # curated dict (with models.dev merge for preferred providers)
             # when the live fetcher comes up empty.
-            model_ids = cached_provider_model_ids(hermes_slug)
+            model_ids = cached_provider_model_ids(
+                hermes_slug,
+                force_refresh=refresh,
+                live_discovery=live_discovery,
+            )
             if not model_ids:
                 model_ids = curated.get(hermes_slug, []) or curated.get(pid, [])
                 if hermes_slug in _MODELS_DEV_PREFERRED:
@@ -1878,13 +1903,21 @@ def list_authenticated_providers(
         # region (eu.*, us.*, ap.*) instead of the hardcoded us.* static list.
         if _cp_config and getattr(_cp_config, "auth_type", "") == "aws_sdk":
             try:
-                _ids = cached_provider_model_ids(_cp.slug)
+                _ids = cached_provider_model_ids(
+                    _cp.slug,
+                    force_refresh=refresh,
+                    live_discovery=live_discovery,
+                )
                 _cp_model_ids = _ids if _ids else curated.get(_cp.slug, [])
             except Exception:
                 _cp_model_ids = curated.get(_cp.slug, [])
         else:
             # Unified pathway — same as sections 1 and 2.
-            _cp_model_ids = cached_provider_model_ids(_cp.slug)
+            _cp_model_ids = cached_provider_model_ids(
+                _cp.slug,
+                force_refresh=refresh,
+                live_discovery=live_discovery,
+            )
             if not _cp_model_ids:
                 _cp_model_ids = curated.get(_cp.slug, [])
         _cp_total = len(_cp_model_ids)
@@ -1979,7 +2012,7 @@ def list_authenticated_providers(
             should_probe = bool(api_url) and discover and (
                 bool(api_key) or not has_explicit_models
             )
-            if should_probe:
+            if live_discovery and should_probe:
                 try:
                     from hermes_cli.models import fetch_api_models
                     live_models = fetch_api_models(api_key, api_url)
@@ -2225,7 +2258,7 @@ def list_authenticated_providers(
                 and (bool(api_key) or not grp["models"])
                 and grp.get("discover_models", True)
             )
-            if should_probe:
+            if live_discovery and should_probe:
                 try:
                     from hermes_cli.models import fetch_api_models
 
