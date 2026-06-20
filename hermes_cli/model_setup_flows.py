@@ -75,7 +75,10 @@ def _prompt_openrouter_model_list_source(current: str = "curated") -> str:
     for idx, (value, label) in enumerate(choices, start=1):
         marker = " [current]" if value == current else ""
         print(f"  {idx}. {label}{marker}")
-    raw = input("Choose source [1-3, Enter keeps current]: ").strip()
+    try:
+        raw = input("Choose source [1-3, Enter keeps current]: ").strip()
+    except (KeyboardInterrupt, EOFError, OSError):
+        return current if current in {"curated", "all", "user"} else "curated"
     if not raw:
         return current if current in {"curated", "all", "user"} else "curated"
     try:
