@@ -2627,6 +2627,7 @@ def _credential_fingerprint(provider: str) -> str:
     import os as _os
 
     parts: list[str] = []
+    provider_norm = normalize_provider(provider) or (provider or "")
 
     # Env vars from PROVIDER_REGISTRY for this slug
     try:
@@ -2640,6 +2641,29 @@ def _credential_fingerprint(provider: str) -> str:
                 parts.append(f"{bev}={_os.environ.get(bev, '')}")
     except Exception:
         pass
+
+    # Provider-specific identity components that affect model discovery even
+    # when no API key env var exists. Bedrock's available model IDs are region
+    # scoped, so region/profile changes must not reuse another region's cache.
+    if provider_norm == "bedrock":
+        for ev in (
+            "AWS_REGION",
+            "AWS_DEFAULT_REGION",
+            "AWS_PROFILE",
+            "AWS_CONFIG_FILE",
+            "AWS_SHARED_CREDENTIALS_FILE",
+        ):
+            parts.append(f"{ev}={_os.environ.get(ev, '')}")
+        for path in (
+            _os.environ.get("AWS_CONFIG_FILE") or _os.path.expanduser("~/.aws/config"),
+            _os.environ.get("AWS_SHARED_CREDENTIALS_FILE") or _os.path.expanduser("~/.aws/credentials"),
+        ):
+            try:
+                parts.append(f"{path}@{_os.stat(path).st_mtime_ns}")
+            except FileNotFoundError:
+                parts.append(f"{path}@missing")
+            except Exception:
+                pass
 
     # OAuth / external-file mtimes that change on re-auth
     try:
@@ -2710,11 +2734,14 @@ def cached_provider_model_ids(
     *,
     force_refresh: bool = False,
     ttl_seconds: int = _PROVIDER_MODELS_CACHE_TTL,
+    live_discovery: bool = True,
 ) -> list[str]:
     """Disk-cached wrapper around :func:`provider_model_ids`.
 
     Hits the cache when fresh; otherwise calls the live function and
-    persists a non-empty result. Always returns a list (never None).
+    persists a non-empty result. When ``live_discovery`` is false, returns a
+    same-credential cache entry even if stale and never performs a live fetch.
+    Always returns a list (never None).
     """
     normalized = normalize_provider(provider) or (provider or "")
     if not normalized:
@@ -2731,9 +2758,15 @@ def cached_provider_model_ids(
         and entry.get("fp") == fp
         and isinstance(entry.get("models"), list)
         and entry["models"]
-        and (now - float(entry.get("at", 0))) < ttl_seconds
+        and (
+            not live_discovery
+            or (now - float(entry.get("at", 0))) < ttl_seconds
+        )
     ):
         return list(entry["models"])
+
+    if not live_discovery:
+        return []
 
     # Cache miss / stale / forced refresh — call the live path.
     live = provider_model_ids(normalized, force_refresh=force_refresh)

@@ -118,6 +118,7 @@ def build_models_payload(
     capabilities: bool = False,
     force_fresh_nous_tier: bool = False,
     refresh: bool = False,
+    live_discovery: bool = False,
     max_models: int | None = None,
 ) -> dict:
     """Build the ``{providers, model, provider}`` shape every consumer
@@ -149,8 +150,13 @@ def build_models_payload(
       re-fetches its live catalog. Set only for an explicit user-triggered
       "refresh models" action; normal picker opens leave it false to stay
       snappy on the 1h cache.
+    - ``live_discovery``: allow network-backed model probes while building the
+      payload. Normal picker opens leave this false so custom endpoints cannot
+      block rendering; explicit refresh paths opt in.
     """
     from hermes_cli.model_switch import list_authenticated_providers
+
+    effective_live_discovery = bool(live_discovery or refresh)
 
     rows = list_authenticated_providers(
         current_provider=ctx.current_provider,
@@ -161,6 +167,7 @@ def build_models_payload(
         force_fresh_nous_tier=force_fresh_nous_tier,
         max_models=max_models,
         refresh=refresh,
+        live_discovery=effective_live_discovery,
     )
 
     moa_row = _moa_provider_row(ctx)

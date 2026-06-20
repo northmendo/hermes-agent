@@ -756,6 +756,83 @@ def test_build_models_payload_forwards_refresh_flag():
     assert captured["refresh"] is True
 
 
+def test_build_models_payload_forwards_live_discovery_flag():
+    """Normal picker opens must stay cached/config-first; explicit refresh
+    callers can opt into live endpoint discovery."""
+    captured: dict = {}
+
+    def _capture(*args, **kwargs):
+        captured["live_discovery"] = kwargs.get("live_discovery")
+        return []
+
+    with patch("hermes_cli.model_switch.list_authenticated_providers", side_effect=_capture):
+        build_models_payload(_empty_ctx())
+    assert captured["live_discovery"] is False
+
+    with patch("hermes_cli.model_switch.list_authenticated_providers", side_effect=_capture):
+        build_models_payload(_empty_ctx(), live_discovery=True)
+    assert captured["live_discovery"] is True
+
+
+def test_build_models_payload_skips_custom_provider_probe_by_default():
+    """The interactive /model picker should not block on custom provider
+    /models probes during a normal open. It should use configured models until
+    a caller explicitly asks for live discovery (for example --refresh)."""
+    ctx = ConfigContext(
+        current_provider="custom-gateway",
+        current_model="configured-a",
+        current_base_url="https://gw.example.com/v1",
+        user_providers={},
+        custom_providers=[{
+            "name": "Custom Gateway",
+            "base_url": "https://gw.example.com/v1",
+            "api_key": "test-key",
+            "model": "configured-a",
+            "models": {"configured-a": {}, "configured-b": {}},
+        }],
+    )
+
+    with patch("agent.models_dev.PROVIDER_TO_MODELS_DEV", {}), \
+         patch("agent.models_dev.fetch_models_dev", return_value={}), \
+         patch("hermes_cli.providers.HERMES_OVERLAYS", {}), \
+         patch("hermes_cli.models.CANONICAL_PROVIDERS", []), \
+         patch("hermes_cli.models.fetch_api_models", return_value=["live-a"]) as fetch:
+        payload = build_models_payload(ctx)
+
+    fetch.assert_not_called()
+    row = payload["providers"][0]
+    assert row["models"] == ["configured-a", "configured-b"]
+
+
+def test_build_models_payload_live_discovery_probes_custom_provider():
+    """Explicit refresh/live-discovery paths still probe custom endpoints so
+    users can pull a fresh /models list when they ask for it."""
+    ctx = ConfigContext(
+        current_provider="custom-gateway",
+        current_model="configured-a",
+        current_base_url="https://gw.example.com/v1",
+        user_providers={},
+        custom_providers=[{
+            "name": "Custom Gateway",
+            "base_url": "https://gw.example.com/v1",
+            "api_key": "test-key",
+            "model": "configured-a",
+            "models": {"configured-a": {}},
+        }],
+    )
+
+    with patch("agent.models_dev.PROVIDER_TO_MODELS_DEV", {}), \
+         patch("agent.models_dev.fetch_models_dev", return_value={}), \
+         patch("hermes_cli.providers.HERMES_OVERLAYS", {}), \
+         patch("hermes_cli.models.CANONICAL_PROVIDERS", []), \
+         patch("hermes_cli.models.fetch_api_models", return_value=["live-a", "live-b"]) as fetch:
+        payload = build_models_payload(ctx, refresh=True, live_discovery=True)
+
+    fetch.assert_called_once_with("test-key", "https://gw.example.com/v1")
+    row = payload["providers"][0]
+    assert row["models"] == ["live-a", "live-b"]
+
+
 def test_list_authenticated_providers_refresh_busts_cache():
     """refresh=True clears the provider-model disk cache exactly once;
     refresh=False leaves it untouched (so normal picker opens stay snappy)."""
