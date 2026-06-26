@@ -13,6 +13,12 @@ on:
 
 permissions:
   contents: write
+  # `workflows: write` is required so the rebased push can update
+  # `.github/workflows/*.yml` files when upstream changes them. Without it,
+  # GitHub rejects the push with:
+  #   refusing to allow a GitHub App to create or update workflow
+  #   `.github/workflows/ci.yml` without `workflows` permission
+  workflows: write
 
 jobs:
   sync-main:
